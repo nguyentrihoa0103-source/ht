@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bookGrad" x1="4" y1="8" x2="60" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F43F5E"/>
+      <stop offset="0.5" stop-color="#EC4899"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#F43F5E" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0F1117"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="14.5" stroke="url(#bookGrad)" stroke-width="2" stroke-opacity="0.6"/>
+  <path d="M32 45C26.5 41.5 17 41.5 11 43.5V19C17 17 26.5 17 32 20.5C37.5 17 47 17 53 19V43.5C47 41.5 37.5 41.5 32 45Z" fill="url(#bookGrad)" filter="url(#glow)"/>
+  <path d="M32 42C27 39 18 39 13 41V21C18 19 27 19 32 22C37 19 46 19 51 21V41C46 39 37 39 32 42Z" fill="#141824"/>
+  <path d="M32 22V42" stroke="url(#bookGrad)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M47 11L48.5 15.5L53 17L48.5 18.5L47 23L45.5 18.5L41 17L45.5 15.5L47 11Z" fill="#FDE047"/>
+  <circle cx="17" cy="15" r="2.5" fill="#FB7185"/>
+</svg>

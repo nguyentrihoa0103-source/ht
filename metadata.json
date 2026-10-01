@@ -1,0 +1,8 @@
+{
+  "name": "Leesin Comic - Kho Truyện Tranh Online",
+  "description": "Website đọc truyện tranh Leesin Comic tích hợp hệ thống thông báo realtime, phân quyền nhóm dịch, quản lý truyện và CDN tachserver.site.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

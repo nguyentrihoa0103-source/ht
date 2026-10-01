@@ -1,0 +1,24 @@
+# Robots.txt for Leesin Comic (leesincomic.com)
+# Optimized for Googlebot, Bingbot & Search Engine Crawlers
+
+User-agent: *
+Allow: /
+Allow: /truyen/
+Allow: /the-loai/
+Allow: /hot
+Allow: /moi-cap-nhat
+Allow: /xep-hang/
+Allow: /nhom-dich-all
+
+# Disallow private user & administrative panels
+Disallow: /admin
+Disallow: /admin/
+Disallow: /nhom-dich-portal
+Disallow: /nhom-dich-portal/
+Disallow: /lich-su
+Disallow: /theo-doi
+Disallow: /api.php
+
+# Sitemaps
+Sitemap: https://leesincomic.com/sitemap.xml
+Sitemap: https://leesincomic.com/sitemap_index.xml
