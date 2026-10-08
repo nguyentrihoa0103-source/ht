@@ -1,6 +1,81 @@
 {
   "comics": [
     {
+      "id": "comic-test-suite-1791024244030",
+      "title": "Đại Quản Gia Là Ma Hoàng (Test)",
+      "slug": "dai-quan-gia-la-ma-hoang-test-1791024244030",
+      "otherNames": [],
+      "coverImage": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600",
+      "bannerImage": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600",
+      "authors": [
+        "Tác Giả Ma Hoàng"
+      ],
+      "status": "Đang tiến hành",
+      "genres": [
+        "Action",
+        "Fantasy"
+      ],
+      "summary": "Tóm tắt ma hoàng.",
+      "teamId": "team-leesin",
+      "teamName": "Leesin Scans",
+      "views": 0,
+      "likes": 0,
+      "follows": 0,
+      "rating": 5,
+      "ratingCount": 1,
+      "updatedAt": "2026-10-03T10:44:04.152Z",
+      "chapters": [
+        {
+          "id": "chap-test-1791024244152",
+          "comicId": "comic-test-suite-1791024244030",
+          "comicTitle": "Đại Quản Gia Là Ma Hoàng (Test)",
+          "chapterNumber": 1,
+          "title": "Chương 1: Mở đầu",
+          "images": [
+            "https://example.com/p1.jpg"
+          ],
+          "teamId": "team-leesin",
+          "teamName": "Leesin Scans",
+          "views": 0,
+          "updatedAt": "2026-10-03T10:44:04.152Z",
+          "isPasswordProtected": false,
+          "createdAt": "2026-10-03T10:44:04.154Z"
+        }
+      ],
+      "isHot": false,
+      "isTrending": false,
+      "createdAt": "2026-10-03T10:44:04.073Z"
+    },
+    {
+      "id": "comic-test-1791023844691",
+      "title": "Truyện Test Kiểm Tra Thêm Mới",
+      "slug": "truyen-test-kiem-tra-them-moi-1791023844691",
+      "otherNames": [],
+      "coverImage": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600",
+      "bannerImage": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600",
+      "authors": [
+        "Tác Giả Test"
+      ],
+      "status": "Đang tiến hành",
+      "genres": [
+        "Action",
+        "Fantasy"
+      ],
+      "summary": "Tóm tắt truyện test.",
+      "teamId": "team-leesin",
+      "teamName": "Leesin Scans",
+      "views": 0,
+      "likes": 0,
+      "follows": 0,
+      "rating": 5,
+      "ratingCount": 1,
+      "updatedAt": "2026-10-03T10:37:24.691Z",
+      "chapters": [],
+      "isHot": false,
+      "isTrending": false,
+      "createdAt": "2026-10-03T10:37:24.730Z"
+    },
+    {
       "id": "comic-1790828141976",
       "title": "lol",
       "slug": "lol",
@@ -7998,12 +8073,12 @@
       "summary": "Xuyên vào tiểu thuyết đam mỹ trong lốt nữ cải nam, cô buộc phải vào vai nam chính cuồng si để quyến rũ nhân vật chính và cứu lấy thế giới. Thế nhưng màn kịch tình yêu lại phản tác dụng — người cô rời bỏ trở thành một vị hoàng đế đầy thù hận, còn những kẻ khác cũng dần bộc lộ những cảm xúc méo mó, lệch lạc. Giờ đây, cô kẹt giữa những trái tim ám ảnh và một thế giới cận kề diệt vong.",
       "teamId": "team-lessin-comic",
       "teamName": "Lessin Comic",
-      "views": 31759,
+      "views": 31766,
       "likes": 3799,
       "follows": 14,
       "rating": 4.9,
       "ratingCount": 263,
-      "updatedAt": "2026-10-01T08:07:39.998Z",
+      "updatedAt": "2026-10-03T08:51:40.527Z",
       "isHot": true,
       "isTrending": true,
       "seo": {
@@ -8024,7 +8099,7 @@
           "title": "Chương 1: 1",
           "createdAt": "2025-11-17T04:45:15.000Z",
           "isPasswordProtected": false,
-          "views": 1519,
+          "views": 1524,
           "images": [
             "https://tachserver.site/cdn3/uploads/minh_hoa/1405/001-1763394036.jpg",
             "https://tachserver.site/cdn3/uploads/minh_hoa/1405/002-1763394047.jpg",
@@ -10690,7 +10765,7 @@
           "chapterNumber": 58,
           "title": "Chương 58: Những kẻ điên cuồng ám ảnh với điều giả tạo 58",
           "createdAt": "2026-09-27T04:50:00.000Z",
-          "views": 276,
+          "views": 277,
           "isPasswordProtected": false,
           "images": [
             "https://tachserver.site/cdn3/uploads/minh_hoa/1405/01-1790428653.jpg",
@@ -10728,9 +10803,9 @@
           "link": "https://leesincomic.com/truyen-tranh/nhung-ke-dien-cuong-am-anh-voi-dieu-gia-tao/chap-58.html"
         }
       ],
-      "dayViews": 1108,
-      "weekViews": 6332,
-      "monthViews": 31661,
+      "dayViews": 1115,
+      "weekViews": 6339,
+      "monthViews": 31668,
       "rawSlug": "nhung-ke-dien-cuong-am-anh-voi-dieu-gia-tao"
     },
     {
@@ -48012,7 +48087,7 @@
       "summary": "Gyeol là công nhân tại một công trường xây dựng. Anh tình cờ gặp chủ thầu của tòa nhà, Yeseung, cùng tuổi với anh. Từ đó, Gyeol liên tục có những giấc mơ đen tối về Yeseung... Truyện được đăng tải duy nhất tại website LEESINCOMIC.COM. Mong mọi người đọc đúng web để ủng hộ nhóm dịch!!!",
       "teamId": "team-lessin-comic",
       "teamName": "Lessin Comic",
-      "views": 68703,
+      "views": 68704,
       "likes": 8240,
       "follows": 20,
       "rating": 4.9,
@@ -48038,7 +48113,7 @@
           "title": "Chương 1: 1",
           "createdAt": "2025-05-21T05:00:00.000Z",
           "isPasswordProtected": false,
-          "views": 4079,
+          "views": 4080,
           "images": [
             "https://leesincomic.com/uploads/minh_hoa/1072/01-1747771052.jpg",
             "https://leesincomic.com/uploads/minh_hoa/1072/02-1747771052.jpg",
@@ -48991,9 +49066,9 @@
           "link": "https://leesincomic.com/truyen-tranh/giua-lung-chung-lua/chap-38.html"
         }
       ],
-      "dayViews": 2404,
-      "weekViews": 19229,
-      "monthViews": 68671,
+      "dayViews": 2405,
+      "weekViews": 19230,
+      "monthViews": 68672,
       "rawSlug": "giua-lung-chung-lua"
     },
     {
@@ -247889,7 +247964,7 @@
       "donateInfo": "Ủng hộ nhóm Lessin Comic qua STK ngân hàng hoặc MoMo để nhóm có kinh phí dịch truyện tiếp nhé!",
       "leaderId": "user-lessin-comic-leader",
       "leaderName": "Trưởng Nhóm Lessin Comic",
-      "totalViews": 914352,
+      "totalViews": 914360,
       "follows": 3026,
       "monthlyViews": {
         "2026-05": 128009,
@@ -247897,13 +247972,15 @@
         "2026-07": 192013,
         "2026-08": 210300,
         "2026-09": 219445,
-        "2026-10": 7,
-        "10/2026": 7
+        "2026-10": 15,
+        "10/2026": 15
       },
       "dailyViews": {
         "2026-09-24": 1,
         "2026-09-30": 1,
-        "2026-10-01": 7
+        "2026-10-01": 7,
+        "2026-10-02": 1,
+        "2026-10-03": 7
       },
       "members": [
         {
@@ -247916,11 +247993,11 @@
           "uploadedChaptersCount": 181
         }
       ],
-      "views_2026_10": 7,
-      "views_10_2026": 7,
+      "views_2026_10": 15,
+      "views_10_2026": 15,
       "months": {
-        "10/2026": 7,
-        "2026-10": 7,
+        "10/2026": 15,
+        "2026-10": 15,
         "T10/2026": 5
       }
     },
@@ -249251,6 +249328,33 @@
         "2026-10": 0,
         "T10/2026": 0
       }
+    },
+    {
+      "id": "team-leesin",
+      "name": "Leesin Comic",
+      "slug": "leesin-comic",
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200",
+      "bio": "Nhóm dịch Leesin Comic",
+      "leaderId": "system",
+      "leaderName": "Leesin Comic",
+      "members": [],
+      "monthlyViews": {
+        "2026-05": 0,
+        "2026-06": 0,
+        "2026-07": 0,
+        "2026-08": 0,
+        "2026-09": 1,
+        "2026-10": 0,
+        "10/2026": 0
+      },
+      "dailyViews": {},
+      "totalViews": 1,
+      "views_2026_10": 0,
+      "views_10_2026": 0,
+      "months": {
+        "10/2026": 0,
+        "2026-10": 0
+      }
     }
   ],
   "users": [
@@ -249744,6 +249848,23 @@
   ],
   "comments": [
     {
+      "comicId": "comic-test-suite-1791024244030",
+      "comicTitle": "comic-test-suite-1791024244030",
+      "comicSlug": "comic-test-suite-1791024244030",
+      "chapterId": "chap-custom",
+      "chapterNumber": 1,
+      "chapterTitle": "Chương 1",
+      "coverImage": "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=300",
+      "userId": "user-admin",
+      "userName": "Admin Leesin Comic",
+      "userAvatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+      "userRole": "ADMIN",
+      "content": "jj",
+      "id": "cmt-1791025620204-abmr",
+      "createdAt": "2026-10-03T11:07:00.204Z",
+      "likes": 0
+    },
+    {
       "id": "cmt-1",
       "comicId": "comic-1",
       "comicTitle": "Đại Quản Gia Là Ma Hoàng",
@@ -249808,7 +249929,26 @@
       "createdAt": "3 giờ trước"
     }
   ],
-  "notifications": [],
+  "notifications": [
+    {
+      "id": "notif-1791025620204-team-wtrg",
+      "recipientTeamId": "team-leesin",
+      "recipientTeamName": "Leesin Scans",
+      "type": "COMMENT",
+      "title": "Bình luận mới về truyện \"Đại Quản Gia Là Ma Hoàng (Test)\"",
+      "content": "Admin Leesin Comic vừa bình luận truyện \"Đại Quản Gia Là Ma Hoàng (Test)\" (Chap 1): \"jj\"",
+      "senderId": "user-admin",
+      "senderName": "Admin Leesin Comic",
+      "senderAvatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+      "comicId": "comic-test-suite-1791024244030",
+      "comicTitle": "Đại Quản Gia Là Ma Hoàng (Test)",
+      "comicSlug": "dai-quan-gia-la-ma-hoang-test-1791024244030",
+      "chapterNumber": 1,
+      "commentId": "cmt-1791025620204-abmr",
+      "createdAt": "2026-10-03T11:07:00.204Z",
+      "isRead": false
+    }
+  ],
   "readingHistory": [
     {
       "id": "hist-1790812765745-h5lo",
@@ -250006,6 +250146,7 @@
       "teamName": "Phượng Hoàng Các"
     }
   ],
+  "followedTeams": [],
   "siteSettings": {
     "siteName": "Leesin Comic",
     "siteDomain": "https://leesincomic.com",

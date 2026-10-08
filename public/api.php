@@ -109,9 +109,9 @@ header('Content-Type: application/json; charset=utf-8');
 // Thay đổi các thông tin dưới đây cho khớp với Database tạo trên DirectAdmin
 // ==========================================
 $DB_HOST = "localhost";
-$DB_NAME = "leesinco_manga";     // Tên Database trên DirectAdmin
-$DB_USER = "leesinco_user";      // Tên User Database
-$DB_PASS = "LeesinComic@2026";   // Mật khẩu User Database
+$DB_NAME = "sql_leesincomic_com";     // Tên Database trên DirectAdmin
+$DB_USER = "sql_leesincomic_com";      // Tên User Database
+$DB_PASS = "34fccad499b8e";   // Mật khẩu User Database
 $SECRET_API_KEY = "Leesin_Secret_MySQL_Key_2026"; // API Key bảo mật khớp với App Frontend
 
 // Đọc file config.php nếu có để hỗ trợ tùy biến DB trên hosting/VPS
@@ -171,106 +171,6 @@ function normalizeMysqlDateTime($val, $allowNull = false) {
         }
     }
     return $allowNull ? null : date('Y-m-d H:i:s');
-}
-
-/**
- * Lấy dữ liệu dự phòng an toàn từ data_store.json khi MySQL chưa sẵn sàng hoặc gặp sự cố
- */
-function getFallbackDataStore() {
-    static $cachedFallback = null;
-    if ($cachedFallback !== null) return $cachedFallback;
-    $candidatePaths = [
-        __DIR__ . '/data_store.json',
-        dirname(__DIR__) . '/data_store.json',
-        __DIR__ . '/dist/data_store.json',
-        dirname(__DIR__) . '/dist/data_store.json',
-        __DIR__ . '/public/data_store.json',
-    ];
-    foreach ($candidatePaths as $p) {
-        if (@file_exists($p)) {
-            $raw = @file_get_contents($p);
-            if ($raw) {
-                $decoded = @json_decode($raw, true);
-                if (is_array($decoded) && !empty($decoded['comics'])) {
-                    $cachedFallback = $decoded;
-                    return $cachedFallback;
-                }
-            }
-        }
-    }
-    return null;
-}
-
-/**
- * Chuyển đổi mọi định dạng thời gian (ISO, MySQL, chuỗi tiếng Việt tương đối) thành timestamp epoch
- */
-function parseDateToEpoch($str) {
-    if (empty($str) || !is_string($str)) return 0;
-    $s = trim($str);
-    if ($s === '') return 0;
-    $sLower = mb_strtolower($s, 'UTF-8');
-    
-    if (strpos($sLower, 'vừa xong') !== false || strpos($sLower, 'vua xong') !== false) {
-        return time();
-    }
-    if (preg_match('/(\d+)\s*(?:giây|s)\s*trước/u', $sLower, $m)) {
-        return time() - intval($m[1]);
-    }
-    if (preg_match('/(\d+)\s*(?:phút|m|min)\s*trước/u', $sLower, $m)) {
-        return time() - intval($m[1]) * 60;
-    }
-    if (preg_match('/(\d+)\s*(?:giờ|tiếng|h)\s*trước/u', $sLower, $m)) {
-        return time() - intval($m[1]) * 3600;
-    }
-    if (strpos($sLower, 'hôm nay') !== false) {
-        return time() - 60;
-    }
-    if (strpos($sLower, 'hôm qua') !== false) {
-        return time() - 86400;
-    }
-    if (preg_match('/(\d+)\s*ngày\s*trước/u', $sLower, $m)) {
-        return time() - intval($m[1]) * 86400;
-    }
-    if (preg_match('/(\d+)\s*tuần\s*trước/u', $sLower, $m)) {
-        return time() - intval($m[1]) * 7 * 86400;
-    }
-    if (preg_match('/(\d+)\s*tháng\s*trước/u', $sLower, $m)) {
-        return time() - intval($m[1]) * 30 * 86400;
-    }
-    if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/', $s, $m)) {
-        $day = intval($m[1]);
-        $month = intval($m[2]);
-        $year = intval($m[3]);
-        $hour = isset($m[4]) ? intval($m[4]) : 12;
-        $min = isset($m[5]) ? intval($m[5]) : 0;
-        $sec = isset($m[6]) ? intval($m[6]) : 0;
-        return mktime($hour, $min, $sec, $month, $day, $year);
-    }
-    $ts = strtotime($s);
-    return ($ts !== false && $ts > 0) ? $ts : 0;
-}
-
-/**
- * Lấy mốc thời gian cập nhật thực tế lớn nhất của bộ truyện và tất cả các chapter
- */
-function getComicLatestEpoch($comic) {
-    if (empty($comic)) return 0;
-    $maxTime = max(
-        parseDateToEpoch($comic['updated_at'] ?? ($comic['updatedAt'] ?? '')),
-        parseDateToEpoch($comic['created_at'] ?? ($comic['createdAt'] ?? ''))
-    );
-    if (!empty($comic['chapters']) && is_array($comic['chapters'])) {
-        foreach ($comic['chapters'] as $ch) {
-            $chTime = max(
-                parseDateToEpoch($ch['updated_at'] ?? ($ch['updatedAt'] ?? '')),
-                parseDateToEpoch($ch['created_at'] ?? ($ch['createdAt'] ?? ''))
-            );
-            if ($chTime > $maxTime) {
-                $maxTime = $chTime;
-            }
-        }
-    }
-    return $maxTime;
 }
 
 // ==========================================
@@ -340,6 +240,7 @@ function initDatabase($pdo) {
         rating_count INT DEFAULT 1,
         is_hot TINYINT(1) DEFAULT 0,
         is_trending TINYINT(1) DEFAULT 0,
+        is_18_plus TINYINT(1) DEFAULT 0,
         is_vip_only TINYINT(1) DEFAULT 0,
         seo JSON,
         seo_title VARCHAR(255),
@@ -554,6 +455,7 @@ function initDatabase($pdo) {
         safeAddColumn($pdo, 'comics', 'rating_count', 'INT DEFAULT 1');
         safeAddColumn($pdo, 'comics', 'is_hot', 'TINYINT(1) DEFAULT 0');
         safeAddColumn($pdo, 'comics', 'is_trending', 'TINYINT(1) DEFAULT 0');
+        safeAddColumn($pdo, 'comics', 'is_18_plus', 'TINYINT(1) DEFAULT 0');
         safeAddColumn($pdo, 'comics', 'is_vip_only', 'TINYINT(1) DEFAULT 0');
         safeAddColumn($pdo, 'comics', 'seo', 'JSON NULL');
         safeAddColumn($pdo, 'comics', 'seo_title', 'VARCHAR(255) NULL');
@@ -563,25 +465,11 @@ function initDatabase($pdo) {
         safeAddColumn($pdo, 'comics', 'updated_at', 'VARCHAR(64) NULL');
         safeAddColumn($pdo, 'chapters', 'updated_at', 'VARCHAR(64) NULL');
         safeAddColumn($pdo, 'chapters', 'scheduled_date', 'VARCHAR(64) NULL');
-        safeAddColumn($pdo, 'notifications', 'recipient_user_id', 'VARCHAR(191) NULL');
-        safeAddColumn($pdo, 'notifications', 'recipient_team_id', 'VARCHAR(191) NULL');
         safeAddColumn($pdo, 'notifications', 'recipient_team_name', 'VARCHAR(255) NULL');
         safeAddColumn($pdo, 'notifications', 'recipient_role', 'VARCHAR(50) NULL');
-        safeAddColumn($pdo, 'notifications', 'type', "VARCHAR(50) NOT NULL DEFAULT 'COMMENT'");
-        safeAddColumn($pdo, 'notifications', 'title', 'VARCHAR(255) NOT NULL DEFAULT ""');
-        safeAddColumn($pdo, 'notifications', 'content', 'TEXT NULL');
-        safeAddColumn($pdo, 'notifications', 'sender_id', 'VARCHAR(191) NULL');
-        safeAddColumn($pdo, 'notifications', 'sender_name', 'VARCHAR(255) NULL');
-        safeAddColumn($pdo, 'notifications', 'sender_avatar', 'TEXT NULL');
-        safeAddColumn($pdo, 'notifications', 'comic_id', 'VARCHAR(191) NULL');
-        safeAddColumn($pdo, 'notifications', 'comic_title', 'VARCHAR(255) NULL');
-        safeAddColumn($pdo, 'notifications', 'comic_slug', 'VARCHAR(191) NULL');
-        safeAddColumn($pdo, 'notifications', 'chapter_number', 'FLOAT NULL');
         safeAddColumn($pdo, 'notifications', 'comment_id', 'VARCHAR(191) NULL');
         safeAddColumn($pdo, 'notifications', 'parent_comment_id', 'VARCHAR(191) NULL');
-        safeAddColumn($pdo, 'notifications', 'is_read', 'TINYINT(1) DEFAULT 0');
         safeAddColumn($pdo, 'notifications', 'link', 'VARCHAR(255) NULL');
-        safeAddColumn($pdo, 'notifications', 'created_at', 'DATETIME DEFAULT CURRENT_TIMESTAMP');
         safeAddColumn($pdo, 'scan_teams', 'donate_info', 'TEXT NULL');
         safeAddColumn($pdo, 'scan_teams', 'donate_qr', 'TEXT NULL');
         safeAddColumn($pdo, 'scan_teams', 'follows', 'INT DEFAULT 0');
@@ -600,6 +488,12 @@ if ($pdo) {
     } catch (Exception $e) {
         // bảng đã tồn tại hoặc bỏ qua
     }
+    // Luôn đảm bảo các cột cần thiết cho chapters và avatar users tồn tại ngay cả khi initDatabase bị bỏ qua
+    safeAddColumn($pdo, 'chapters', 'updated_at', 'VARCHAR(64) NULL');
+    safeAddColumn($pdo, 'chapters', 'scheduled_date', 'VARCHAR(64) NULL');
+    try {
+        $pdo->exec("ALTER TABLE users MODIFY COLUMN avatar LONGTEXT NULL");
+    } catch (Exception $eAvatar) {}
 }
 
 // Kiểm tra header API Key nếu là thao tác sửa/xóa/thêm
@@ -631,41 +525,18 @@ $action = isset($_GET['action']) ? $_GET['action'] : '';
 // ROUTE: PING TEST KẾT NỐI DATABASE
 // -----------------------------------------------------------------------------
 if ($action === 'ping' || empty($action)) {
-    $comicCount = 0;
-    $chapCount = 0;
-    $userCount = 0;
-    $status = 'offline';
-    $message = 'Chưa kết nối được MySQL!';
-
-    if ($pdo) {
-        try {
-            $comicCount = intval($pdo->query("SELECT COUNT(*) FROM comics")->fetchColumn());
-            $chapCount = intval($pdo->query("SELECT COUNT(*) FROM chapters")->fetchColumn());
-            $userCount = intval($pdo->query("SELECT COUNT(*) FROM users")->fetchColumn());
-            $status = 'online';
-            $message = 'Kết nối MySQL Server thành công!';
-        } catch (Throwable $e) {
-            $status = 'online (warning)';
-            $message = 'Kết nối MySQL thành công nhưng bảng chưa đồng bộ: ' . $e->getMessage();
-        }
-    } else {
-        $fallback = getFallbackDataStore();
-        if ($fallback) {
-            $comicCount = count($fallback['comics'] ?? []);
-            $userCount = count($fallback['users'] ?? []);
-            $status = 'online (data_store.json)';
-            $message = 'Hệ thống đang hoạt động với dữ liệu dự phòng data_store.json!';
-        }
-    }
+    $comicCount = $pdo->query("SELECT COUNT(*) FROM comics")->fetchColumn();
+    $chapCount = $pdo->query("SELECT COUNT(*) FROM chapters")->fetchColumn();
+    $userCount = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
 
     sendJsonResponse([
         'success' => true,
-        'status' => $status,
+        'status' => 'online',
         'database' => $DB_NAME,
-        'message' => $message,
-        'totalComics' => $comicCount,
-        'totalChapters' => $chapCount,
-        'totalUsers' => $userCount,
+        'message' => 'Kết nối MySQL Server thành công!',
+        'totalComics' => intval($comicCount),
+        'totalChapters' => intval($chapCount),
+        'totalUsers' => intval($userCount),
         'server_time' => date('Y-m-d H:i:s')
     ]);
 }
@@ -737,8 +608,8 @@ if ($action === 'auto_import_from_json' || $action === 'sync_json_to_sql') {
         $comicStmt = $pdo->prepare("INSERT INTO comics (
             id, title, slug, other_names, cover_image, banner_image, authors, status, genres, summary,
             team_id, team_name, views, views_day, views_week, views_month, daily_views, weekly_views, monthly_views,
-            likes, follows, rating, rating_count, is_hot, is_trending, is_vip_only, seo, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            likes, follows, rating, rating_count, is_hot, is_trending, is_18_plus, is_vip_only, seo, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE title=VALUES(title), views=VALUES(views), cover_image=VALUES(cover_image), updated_at=VALUES(updated_at)");
 
         $chapStmt = $pdo->prepare("INSERT INTO chapters (
@@ -765,7 +636,7 @@ if ($action === 'auto_import_from_json' || $action === 'sync_json_to_sql') {
                 $c['summary'] ?? '', $c['teamId'] ?? '', $c['teamName'] ?? '',
                 $c['views'] ?? 0, $dViews, $wViews, $mViews, $dViews, $wViews, $mViews,
                 $c['likes'] ?? 0, $c['follows'] ?? 0, $c['rating'] ?? 5.0, $c['ratingCount'] ?? 1,
-                !empty($c['isHot']) ? 1 : 0, !empty($c['isTrending']) ? 1 : 0, 0,
+                !empty($c['isHot']) ? 1 : 0, !empty($c['isTrending']) ? 1 : 0, !empty($c['is18Plus']) || !empty($c['is_18_plus']) ? 1 : 0, 0,
                 json_encode($c['seo'] ?? []), $cUpdatedAt
             ]);
 
@@ -805,140 +676,126 @@ if ($action === 'auto_import_from_json' || $action === 'sync_json_to_sql') {
 
 // -----------------------------------------------------------------------------
 // ROUTE: LẤY DANH SÁCH TRUYỆN (GET COMICS / GET TEAM COMICS)
-// Sắp xếp CHUẨN XÁC theo thời gian cập nhật mới nhất của truyện hoặc chapter
+// Sắp xếp chuẩn theo thời gian cập nhật chapter mới nhất: ORDER BY latest_chapter_update DESC
 // -----------------------------------------------------------------------------
 if ($action === 'get_comics' || $action === 'get_team_comics') {
     try {
-        $tId = trim($_GET['team_id'] ?? $_GET['teamId'] ?? '');
-        $tName = trim($_GET['team_name'] ?? $_GET['teamName'] ?? '');
-        $comics = [];
-
-        if ($pdo) {
-            $whereSql = "WHERE 1=1";
-            $params = [];
-
-            if ($tId !== '' && $tName !== '') {
-                $whereSql .= " AND (c.team_id = ? OR c.team_name = ? OR c.team_name LIKE ? OR c.team_id = ?)";
-                $params[] = $tId;
-                $params[] = $tName;
-                $params[] = '%' . $tName . '%';
-                $params[] = $tName;
-            } elseif ($tId !== '') {
-                $whereSql .= " AND (c.team_id = ? OR c.team_name = ? OR c.team_name LIKE ?)";
-                $params[] = $tId;
-                $params[] = $tId;
-                $params[] = '%' . $tId . '%';
-            } elseif ($tName !== '') {
-                $whereSql .= " AND (c.team_name = ? OR c.team_id = ? OR c.team_name LIKE ?)";
-                $params[] = $tName;
-                $params[] = $tName;
-                $params[] = '%' . $tName . '%';
-            }
-
-            $stmt = $pdo->prepare("SELECT c.* FROM comics c {$whereSql} ORDER BY c.id DESC");
-            $stmt->execute($params);
-            $comics = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $whereSql = "WHERE 1=1";
+        $params = [];
+        $tId = $_GET['team_id'] ?? $_GET['teamId'] ?? '';
+        $tName = $_GET['team_name'] ?? $_GET['teamName'] ?? '';
+        if ($tId !== '') {
+            $whereSql .= " AND (c.team_id = ? OR c.team_name = ?)";
+            $params[] = $tId;
+            $params[] = $tName ?: $tId;
+        } elseif ($tName !== '') {
+            $whereSql .= " AND (c.team_name = ? OR c.team_id = ?)";
+            $params[] = $tName;
+            $params[] = $tId ?: $tName;
         }
 
-        // Nếu database chưa có dữ liệu hoặc $pdo chưa kết nối, tự động nạp từ data_store.json dự phòng
+        $stmt = $pdo->prepare("
+            SELECT c.*
+            FROM comics c
+            {$whereSql}
+            ORDER BY c.id DESC
+        ");
+        $stmt->execute($params);
+        $comics = $stmt->fetchAll();
+
         if (empty($comics)) {
-            $fallbackStore = getFallbackDataStore();
-            if ($fallbackStore && !empty($fallbackStore['comics'])) {
-                $allFallback = $fallbackStore['comics'];
-                if ($tId !== '' || $tName !== '') {
-                    $tIdLower = strtolower($tId);
-                    $tNameLower = strtolower($tName);
-                    $comics = array_values(array_filter($allFallback, function($c) use ($tIdLower, $tNameLower) {
-                        $cTId = strtolower($c['teamId'] ?? $c['team_id'] ?? '');
-                        $cTName = strtolower($c['teamName'] ?? $c['team_name'] ?? '');
-                        return ($tIdLower !== '' && ($cTId === $tIdLower || $cTName === $tIdLower || strpos($cTName, $tIdLower) !== false)) ||
-                               ($tNameLower !== '' && ($cTName === $tNameLower || $cTId === $tNameLower || strpos($cTName, $tNameLower) !== false));
-                    }));
-                } else {
-                    $comics = $allFallback;
-                }
-            }
+            sendJsonResponse(['success' => true, 'comics' => []]);
         }
 
-        // Tối ưu tải Chapters hàng loạt (batching) KHÔNG lấy cột images nặng để tránh lỗi tràn RAM 500
-        if ($pdo && !empty($comics)) {
-            $comicIds = array_column($comics, 'id');
-            $chapsByComic = [];
+        // Tối ưu hóa: Lấy toàn bộ chapters trong 1 QUERY duy nhất, bỏ cột 'images' nặng nề
+        // để tăng tốc đồng bộ từ 2 phút xuống tức thời (<50ms).
+        $comicIds = array_column($comics, 'id');
+        $inPlaceholders = implode(',', array_fill(0, count($comicIds), '?'));
 
-            $chunks = array_chunk($comicIds, 200);
-            foreach ($chunks as $chunk) {
-                if (empty($chunk)) continue;
-                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+        $allChapters = [];
+        try {
+            $chapStmt = $pdo->prepare("
+                SELECT id, comic_id, chapter_number, title, is_password_protected, scheduled_date, team_id, team_name, created_at, updated_at, views
+                FROM chapters
+                WHERE comic_id IN ({$inPlaceholders})
+                ORDER BY chapter_number ASC
+            ");
+            $chapStmt->execute($comicIds);
+            $allChapters = $chapStmt->fetchAll();
+        } catch (Exception $eChap) {
+            safeAddColumn($pdo, 'chapters', 'updated_at', 'VARCHAR(64) NULL');
+            try {
                 $chapStmt = $pdo->prepare("
-                    SELECT id, comic_id, chapter_number, title, is_password_protected, 
-                           scheduled_date, views, team_id, team_name, created_at, updated_at
-                    FROM chapters 
-                    WHERE comic_id IN ({$placeholders})
+                    SELECT id, comic_id, chapter_number, title, is_password_protected, scheduled_date, team_id, team_name, created_at, views
+                    FROM chapters
+                    WHERE comic_id IN ({$inPlaceholders})
                     ORDER BY chapter_number ASC
                 ");
-                $chapStmt->execute($chunk);
-                $fetchedChaps = $chapStmt->fetchAll(PDO::FETCH_ASSOC);
-
-                foreach ($fetchedChaps as $ch) {
-                    $ch['comicId'] = $ch['comic_id'];
-                    $ch['comicTitle'] = $ch['title'] ?? '';
-                    $ch['chapterNumber'] = floatval($ch['chapter_number']);
-                    $ch['isPasswordProtected'] = (bool)($ch['is_password_protected'] ?? 0);
-                    $ch['scheduledDate'] = $ch['scheduled_date'];
-                    $ch['teamId'] = $ch['team_id'];
-                    $ch['teamName'] = $ch['team_name'];
-                    $ch['createdAt'] = $ch['created_at'];
-                    $ch['updatedAt'] = !empty($ch['updated_at']) ? $ch['updated_at'] : $ch['created_at'];
-                    $ch['views'] = intval($ch['views'] ?? 0);
-                    $ch['images'] = []; // Danh sách truyện chỉ cần metadata chapter, không load hàng triệu URL ảnh để bảo vệ bộ nhớ
-                    $chapsByComic[$ch['comic_id']][] = $ch;
-                }
+                $chapStmt->execute($comicIds);
+                $allChapters = $chapStmt->fetchAll();
+            } catch (Exception $eChap2) {
+                $allChapters = [];
             }
-
-            foreach ($comics as &$c) {
-                if (isset($c['other_names'])) {
-                    $c['otherNames'] = is_array($c['other_names']) ? $c['other_names'] : json_decode($c['other_names'] ?: '[]', true);
-                }
-                if (isset($c['authors'])) {
-                    $c['authors'] = is_array($c['authors']) ? $c['authors'] : json_decode($c['authors'] ?: '[]', true);
-                }
-                if (isset($c['genres'])) {
-                    $c['genres'] = is_array($c['genres']) ? $c['genres'] : json_decode($c['genres'] ?: '[]', true);
-                }
-                if (isset($c['seo'])) {
-                    $c['seo'] = is_array($c['seo']) ? $c['seo'] : json_decode($c['seo'] ?: '{}', true);
-                }
-                $c['coverImage'] = $c['cover_image'] ?? ($c['coverImage'] ?? '');
-                $c['bannerImage'] = $c['banner_image'] ?? ($c['bannerImage'] ?? $c['coverImage']);
-                $c['teamId'] = $c['team_id'] ?? ($c['teamId'] ?? '');
-                $c['teamName'] = $c['team_name'] ?? ($c['teamName'] ?? '');
-                $c['ratingCount'] = intval($c['rating_count'] ?? ($c['ratingCount'] ?? 1));
-                $c['views'] = intval($c['views'] ?? 0);
-                $c['likes'] = intval($c['likes'] ?? 0);
-                $c['follows'] = intval($c['follows'] ?? 0);
-                $c['isHot'] = (bool)($c['is_hot'] ?? ($c['isHot'] ?? false));
-                $c['isTrending'] = (bool)($c['is_trending'] ?? ($c['isTrending'] ?? false));
-                $c['chapters'] = $chapsByComic[$c['id']] ?? ($c['chapters'] ?? []);
-            }
-            unset($c);
         }
 
-        // Sắp xếp CHUẨN XÁC theo mốc thời gian cập nhật mới nhất (giảm dần)
-        usort($comics, function($a, $b) {
-            $tA = getComicLatestEpoch($a);
-            $tB = getComicLatestEpoch($b);
-            if ($tB !== $tA) {
-                return $tB <=> $tA;
+        $chaptersByComic = [];
+        $latestChapterUpdateByComic = [];
+        foreach ($allChapters as $ch) {
+            $cid = $ch['comic_id'];
+            $chTime = !empty($ch['updated_at']) ? $ch['updated_at'] : $ch['created_at'];
+            if (!isset($latestChapterUpdateByComic[$cid]) || $chTime > $latestChapterUpdateByComic[$cid]) {
+                $latestChapterUpdateByComic[$cid] = $chTime;
             }
-            return strcmp($b['id'] ?? '', $a['id'] ?? '');
+            $chaptersByComic[$cid][] = [
+                'id' => $ch['id'],
+                'comicId' => $cid,
+                'comicTitle' => $ch['title'] ?? '',
+                'chapterNumber' => floatval($ch['chapter_number']),
+                'title' => $ch['title'],
+                'isPasswordProtected' => (bool)$ch['is_password_protected'],
+                'scheduledDate' => $ch['scheduled_date'],
+                'teamId' => $ch['team_id'],
+                'teamName' => $ch['team_name'],
+                'createdAt' => $ch['created_at'],
+                'updatedAt' => $chTime,
+                'views' => intval($ch['views']),
+                'images' => [],
+            ];
+        }
+
+        // Parse JSON columns và gán danh sách chapters tương ứng
+        foreach ($comics as &$c) {
+            $cid = $c['id'];
+            $c['otherNames'] = json_decode($c['other_names'] ?: '[]', true);
+            $c['authors'] = json_decode($c['authors'] ?: '[]', true);
+            $c['genres'] = json_decode($c['genres'] ?: '[]', true);
+            $c['seo'] = json_decode($c['seo'] ?: '{}', true);
+            $c['coverImage'] = $c['cover_image'];
+            $c['bannerImage'] = $c['banner_image'];
+            $c['teamId'] = $c['team_id'];
+            $c['teamName'] = $c['team_name'];
+            $latestUpdate = $latestChapterUpdateByComic[$cid] ?? ($latestChapterUpdateByComic[$c['slug'] ?? ''] ?? null);
+            $c['updatedAt'] = !empty($latestUpdate) ? $latestUpdate : ((!empty($c['updated_at']) && $c['updated_at'] !== 'Vừa xong') ? $c['updated_at'] : $c['created_at']);
+            $c['createdAt'] = $c['created_at'];
+            $c['ratingCount'] = intval($c['rating_count']);
+            $c['views'] = intval($c['views']);
+            $c['likes'] = intval($c['likes']);
+            $c['follows'] = intval($c['follows']);
+            $c['isHot'] = (bool)$c['is_hot'];
+            $c['isTrending'] = (bool)$c['is_trending'];
+            $c['is18Plus'] = !empty($c['is_18_plus']);
+            $c['chapters'] = $chaptersByComic[$cid] ?? ($chaptersByComic[$c['slug'] ?? ''] ?? []);
+        }
+        unset($c);
+
+        // Sắp xếp truyện theo thời gian cập nhật mới nhất (updatedAt DESC)
+        usort($comics, function ($a, $b) {
+            return strcmp($b['updatedAt'] ?? '', $a['updatedAt'] ?? '');
         });
 
-        sendJsonResponse(['success' => true, 'comics' => array_values($comics)]);
-    } catch (Throwable $e) {
-        @error_log("Lỗi get_comics: " . $e->getMessage());
-        $fallback = getFallbackDataStore();
-        $fallbackComics = $fallback['comics'] ?? [];
-        sendJsonResponse(['success' => true, 'comics' => $fallbackComics, 'warning' => $e->getMessage()], 200);
+        sendJsonResponse(['success' => true, 'comics' => $comics]);
+    } catch (Exception $e) {
+        sendJsonResponse(['success' => false, 'message' => 'Lỗi SQL khi tải danh sách truyện: ' . $e->getMessage()], 500);
     }
 }
 
@@ -974,6 +831,7 @@ if ($action === 'get_comic' || $action === 'get_comic_detail') {
         $c['follows'] = intval($c['follows']);
         $c['isHot'] = (bool)$c['is_hot'];
         $c['isTrending'] = (bool)$c['is_trending'];
+        $c['is18Plus'] = !empty($c['is_18_plus']);
 
         $chapStmt = $pdo->prepare("SELECT * FROM chapters WHERE comic_id = ? ORDER BY chapter_number ASC");
         $chapStmt->execute([$c['id']]);
@@ -1016,7 +874,9 @@ if ($action === 'get_chapter') {
             if ($chapterId) {
                 $stmt = $pdo->prepare("SELECT * FROM chapters WHERE id = ? LIMIT 1");
                 $stmt->execute([$chapterId]);
-            } elseif ($comicSlug && $chapterNumber !== null) {
+                $ch = $stmt->fetch();
+            }
+            if (!$ch && $comicSlug && $chapterNumber !== null) {
                 $cStmt = $pdo->prepare("SELECT id FROM comics WHERE slug = ? OR id = ? LIMIT 1");
                 $cStmt->execute([$comicSlug, $comicSlug]);
                 $cRow = $cStmt->fetch();
@@ -1024,8 +884,8 @@ if ($action === 'get_chapter') {
 
                 $stmt = $pdo->prepare("SELECT * FROM chapters WHERE comic_id = ? AND chapter_number = ? LIMIT 1");
                 $stmt->execute([$cId, $chapterNumber]);
+                $ch = $stmt->fetch();
             }
-            $ch = $stmt ? $stmt->fetch() : null;
         }
 
         // Tìm trong file data_store.json nếu không có trong MySQL
@@ -1594,6 +1454,7 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
         $ratingCount = intval($data['ratingCount'] ?? $data['rating_count'] ?? 1);
         $isHot = !empty($data['isHot']) || !empty($data['is_hot']) ? 1 : 0;
         $isTrending = !empty($data['isTrending']) || !empty($data['is_trending']) ? 1 : 0;
+        $is18Plus = !empty($data['is18Plus']) || !empty($data['is_18_plus']) ? 1 : 0;
         $seo = $data['seo'] ?? [];
 
         $existByIdStmt = $pdo->prepare("SELECT id, slug, updated_at, views FROM comics WHERE id = ? LIMIT 1");
@@ -1632,18 +1493,19 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
         safeAddColumn($pdo, 'comics', 'seo_desc', 'TEXT NULL');
         safeAddColumn($pdo, 'comics', 'seo_keyword', 'VARCHAR(255) NULL');
         safeAddColumn($pdo, 'comics', 'canonical_url', 'VARCHAR(255) NULL');
+        safeAddColumn($pdo, 'comics', 'is_18_plus', 'TINYINT(1) DEFAULT 0');
 
         try {
             $stmt = $pdo->prepare("
                 INSERT INTO comics (
                     id, title, slug, other_names, cover_image, banner_image,
                     authors, status, genres, summary, team_id, team_name,
-                    views, likes, follows, rating, rating_count, is_hot, is_trending,
+                    views, likes, follows, rating, rating_count, is_hot, is_trending, is_18_plus,
                     seo, seo_title, seo_desc, seo_keyword, canonical_url, updated_at
                 ) VALUES (
                     :id, :title, :slug, :other_names, :cover_image, :banner_image,
                     :authors, :status, :genres, :summary, :team_id, :team_name,
-                    :views, :likes, :follows, :rating, :rating_count, :is_hot, :is_trending,
+                    :views, :likes, :follows, :rating, :rating_count, :is_hot, :is_trending, :is_18_plus,
                     :seo, :seo_title, :seo_desc, :seo_keyword, :canonical_url, :updated_at
                 ) ON DUPLICATE KEY UPDATE
                     title = VALUES(title),
@@ -1664,6 +1526,7 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
                     rating_count = VALUES(rating_count),
                     is_hot = VALUES(is_hot),
                     is_trending = VALUES(is_trending),
+                    is_18_plus = VALUES(is_18_plus),
                     seo = VALUES(seo),
                     seo_title = VALUES(seo_title),
                     seo_desc = VALUES(seo_desc),
@@ -1692,6 +1555,7 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
                 ':rating_count' => $ratingCount,
                 ':is_hot' => $isHot,
                 ':is_trending' => $isTrending,
+                ':is_18_plus' => $is18Plus,
                 ':seo' => json_encode($seo, JSON_UNESCAPED_UNICODE),
                 ':seo_title' => $seoTitle,
                 ':seo_desc' => $seoDesc,
@@ -1705,11 +1569,11 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
                 INSERT INTO comics (
                     id, title, slug, other_names, cover_image, banner_image,
                     authors, status, genres, summary, team_id, team_name,
-                    views, likes, follows, rating, rating_count, is_hot, is_trending, updated_at
+                    views, likes, follows, rating, rating_count, is_hot, is_trending, is_18_plus, updated_at
                 ) VALUES (
                     :id, :title, :slug, :other_names, :cover_image, :banner_image,
                     :authors, :status, :genres, :summary, :team_id, :team_name,
-                    :views, :likes, :follows, :rating, :rating_count, :is_hot, :is_trending, :updated_at
+                    :views, :likes, :follows, :rating, :rating_count, :is_hot, :is_trending, :is_18_plus, :updated_at
                 ) ON DUPLICATE KEY UPDATE
                     title = VALUES(title),
                     slug = VALUES(slug),
@@ -1725,6 +1589,7 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
                     views = GREATEST(COALESCE(views, 0), COALESCE(VALUES(views), 0)),
                     is_hot = VALUES(is_hot),
                     is_trending = VALUES(is_trending),
+                    is_18_plus = VALUES(is_18_plus),
                     updated_at = VALUES(updated_at)
             ");
             $stmtFallback->execute([
@@ -1747,6 +1612,7 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
                 ':rating_count' => $ratingCount,
                 ':is_hot' => $isHot,
                 ':is_trending' => $isTrending,
+                ':is_18_plus' => $is18Plus,
                 ':updated_at' => $resolvedUpdatedAt,
             ]);
         }
@@ -1827,16 +1693,50 @@ if (($action === 'save_chapter' || $action === 'add_chapter' || $action === 'upd
 
         $nowStr = date('Y-m-d H:i:s');
         $targetComicId = trim($data['comicId'] ?? $data['comic_id'] ?? '');
-        $checkComicStmt = $pdo->prepare("SELECT id, title FROM comics WHERE id = ? OR slug = ? LIMIT 1");
-        $checkComicStmt->execute([$targetComicId, $targetComicId]);
+        $cleanIdWithoutPrefix = preg_replace('/^comic-/', '', $targetComicId);
+        $cleanIdWithPrefix = 'comic-' . $cleanIdWithoutPrefix;
+
+        $checkComicStmt = $pdo->prepare("SELECT id, title, slug FROM comics WHERE id = ? OR slug = ? OR id = ? OR slug = ? LIMIT 1");
+        $checkComicStmt->execute([$targetComicId, $targetComicId, $cleanIdWithPrefix, $cleanIdWithoutPrefix]);
         $matchedComic = $checkComicStmt->fetch();
         if ($matchedComic) {
             $targetComicId = $matchedComic['id'];
+        } elseif (!empty($data['comicTitle'])) {
+            $checkTitleStmt = $pdo->prepare("SELECT id, title, slug FROM comics WHERE LOWER(title) = LOWER(?) LIMIT 1");
+            $checkTitleStmt->execute([trim($data['comicTitle'])]);
+            $matchedComic = $checkTitleStmt->fetch();
+            if ($matchedComic) {
+                $targetComicId = $matchedComic['id'];
+            }
         }
 
-        $existChapStmt = $pdo->prepare("SELECT created_at, updated_at FROM chapters WHERE id = ? LIMIT 1");
-        $existChapStmt->execute([$data['id']]);
-        $existChap = $existChapStmt->fetch();
+        if (!$matchedComic) {
+            $cTitle = !empty($data['comicTitle']) ? trim($data['comicTitle']) : 'Truyện Mới';
+            $insComic = $pdo->prepare("
+                INSERT INTO comics (id, title, slug, cover_image, genres, team_id, team_name, created_at, updated_at)
+                VALUES (?, ?, ?, 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600', '[]', ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE title = VALUES(title)
+            ");
+            $insComic->execute([$targetComicId, $cTitle, $targetComicId, $data['teamId'] ?? '', $data['teamName'] ?? '', $nowStr, $nowStr]);
+        }
+
+        $targetChapNum = floatval($data['chapterNumber'] ?? $data['chapter_number'] ?? 1);
+        $existChap = null;
+        try {
+            $existChapStmt = $pdo->prepare("SELECT id, created_at, updated_at FROM chapters WHERE id = ? OR (comic_id = ? AND chapter_number = ?) LIMIT 1");
+            $existChapStmt->execute([$data['id'], $targetComicId, $targetChapNum]);
+            $existChap = $existChapStmt->fetch();
+        } catch (Exception $eExist) {
+            safeAddColumn($pdo, 'chapters', 'updated_at', 'VARCHAR(64) NULL');
+            try {
+                $existChapStmt = $pdo->prepare("SELECT id, created_at FROM chapters WHERE id = ? OR (comic_id = ? AND chapter_number = ?) LIMIT 1");
+                $existChapStmt->execute([$data['id'], $targetComicId, $targetChapNum]);
+                $existChap = $existChapStmt->fetch();
+            } catch (Exception $eExist2) {}
+        }
+        if ($existChap && !empty($existChap['id'])) {
+            $data['id'] = $existChap['id'];
+        }
 
         if ($existChap) {
             $rawCreated = (!empty($existChap['created_at']) && $existChap['created_at'] !== 'Vừa xong')
@@ -1858,44 +1758,124 @@ if (($action === 'save_chapter' || $action === 'add_chapter' || $action === 'upd
         $resolvedUpdatedAt = normalizeMysqlDateTime($rawUpdated, false);
         $resolvedScheduledDate = normalizeMysqlDateTime($data['scheduledDate'] ?? null, true);
 
-        $stmt = $pdo->prepare("
-            INSERT INTO chapters (
-                id, comic_id, comic_title, chapter_number, title,
-                is_password_protected, password, scheduled_date, views,
-                images, team_id, team_name, created_at, updated_at
-            ) VALUES (
-                :id, :comic_id, :comic_title, :chapter_number, :title,
-                :is_password_protected, :password, :scheduled_date, :views,
-                :images, :team_id, :team_name, :created_at, :updated_at
-            ) ON DUPLICATE KEY UPDATE
-                comic_title = VALUES(comic_title),
-                chapter_number = VALUES(chapter_number),
-                title = VALUES(title),
-                is_password_protected = VALUES(is_password_protected),
-                password = VALUES(password),
-                scheduled_date = VALUES(scheduled_date),
-                images = VALUES(images),
-                team_id = VALUES(team_id),
-                team_name = VALUES(team_name),
-                updated_at = VALUES(updated_at)
-        ");
+        try {
+            $stmt = $pdo->prepare("
+                INSERT INTO chapters (
+                    id, comic_id, comic_title, chapter_number, title,
+                    is_password_protected, password, scheduled_date, views,
+                    images, team_id, team_name, created_at, updated_at
+                ) VALUES (
+                    :id, :comic_id, :comic_title, :chapter_number, :title,
+                    :is_password_protected, :password, :scheduled_date, :views,
+                    :images, :team_id, :team_name, :created_at, :updated_at
+                ) ON DUPLICATE KEY UPDATE
+                    comic_title = VALUES(comic_title),
+                    chapter_number = VALUES(chapter_number),
+                    title = VALUES(title),
+                    is_password_protected = VALUES(is_password_protected),
+                    password = VALUES(password),
+                    scheduled_date = VALUES(scheduled_date),
+                    images = VALUES(images),
+                    team_id = VALUES(team_id),
+                    team_name = VALUES(team_name),
+                    updated_at = VALUES(updated_at)
+            ");
 
-        $stmt->execute([
-            ':id' => $data['id'],
-            ':comic_id' => $targetComicId,
-            ':comic_title' => $data['comicTitle'] ?? ($matchedComic['title'] ?? ''),
-            ':chapter_number' => floatval($data['chapterNumber'] ?? $data['chapter_number'] ?? 1),
-            ':title' => $data['title'] ?? ('Chương ' . ($data['chapterNumber'] ?? 1)),
-            ':is_password_protected' => !empty($data['isPasswordProtected']) ? 1 : 0,
-            ':password' => $data['password'] ?? null,
-            ':scheduled_date' => $resolvedScheduledDate,
-            ':views' => intval($data['views'] ?? 0),
-            ':images' => json_encode($data['images'] ?? [], JSON_UNESCAPED_SLASHES),
-            ':team_id' => $data['teamId'] ?? '',
-            ':team_name' => $data['teamName'] ?? '',
-            ':created_at' => $resolvedCreatedAt,
-            ':updated_at' => $resolvedUpdatedAt,
-        ]);
+            $stmt->execute([
+                ':id' => $data['id'],
+                ':comic_id' => $targetComicId,
+                ':comic_title' => $data['comicTitle'] ?? ($matchedComic['title'] ?? ''),
+                ':chapter_number' => $targetChapNum,
+                ':title' => $data['title'] ?? ('Chương ' . $targetChapNum),
+                ':is_password_protected' => !empty($data['isPasswordProtected']) ? 1 : 0,
+                ':password' => $data['password'] ?? null,
+                ':scheduled_date' => $resolvedScheduledDate,
+                ':views' => intval($data['views'] ?? 0),
+                ':images' => json_encode($data['images'] ?? [], JSON_UNESCAPED_SLASHES),
+                ':team_id' => $data['teamId'] ?? '',
+                ':team_name' => $data['teamName'] ?? '',
+                ':created_at' => $resolvedCreatedAt,
+                ':updated_at' => $resolvedUpdatedAt,
+            ]);
+        } catch (Exception $eIns) {
+            safeAddColumn($pdo, 'chapters', 'updated_at', 'VARCHAR(64) NULL');
+            try {
+                $stmtRetry = $pdo->prepare("
+                    INSERT INTO chapters (
+                        id, comic_id, comic_title, chapter_number, title,
+                        is_password_protected, password, scheduled_date, views,
+                        images, team_id, team_name, created_at, updated_at
+                    ) VALUES (
+                        :id, :comic_id, :comic_title, :chapter_number, :title,
+                        :is_password_protected, :password, :scheduled_date, :views,
+                        :images, :team_id, :team_name, :created_at, :updated_at
+                    ) ON DUPLICATE KEY UPDATE
+                        comic_title = VALUES(comic_title),
+                        chapter_number = VALUES(chapter_number),
+                        title = VALUES(title),
+                        is_password_protected = VALUES(is_password_protected),
+                        password = VALUES(password),
+                        scheduled_date = VALUES(scheduled_date),
+                        images = VALUES(images),
+                        team_id = VALUES(team_id),
+                        team_name = VALUES(team_name),
+                        updated_at = VALUES(updated_at)
+                ");
+                $stmtRetry->execute([
+                    ':id' => $data['id'],
+                    ':comic_id' => $targetComicId,
+                    ':comic_title' => $data['comicTitle'] ?? ($matchedComic['title'] ?? ''),
+                    ':chapter_number' => $targetChapNum,
+                    ':title' => $data['title'] ?? ('Chương ' . $targetChapNum),
+                    ':is_password_protected' => !empty($data['isPasswordProtected']) ? 1 : 0,
+                    ':password' => $data['password'] ?? null,
+                    ':scheduled_date' => $resolvedScheduledDate,
+                    ':views' => intval($data['views'] ?? 0),
+                    ':images' => json_encode($data['images'] ?? [], JSON_UNESCAPED_SLASHES),
+                    ':team_id' => $data['teamId'] ?? '',
+                    ':team_name' => $data['teamName'] ?? '',
+                    ':created_at' => $resolvedCreatedAt,
+                    ':updated_at' => $resolvedUpdatedAt,
+                ]);
+            } catch (Exception $eIns2) {
+                // Fallback nếu bảng chapters chưa có cột updated_at
+                $stmtFallback = $pdo->prepare("
+                    INSERT INTO chapters (
+                        id, comic_id, comic_title, chapter_number, title,
+                        is_password_protected, password, scheduled_date, views,
+                        images, team_id, team_name, created_at
+                    ) VALUES (
+                        :id, :comic_id, :comic_title, :chapter_number, :title,
+                        :is_password_protected, :password, :scheduled_date, :views,
+                        :images, :team_id, :team_name, :created_at
+                    ) ON DUPLICATE KEY UPDATE
+                        comic_title = VALUES(comic_title),
+                        chapter_number = VALUES(chapter_number),
+                        title = VALUES(title),
+                        is_password_protected = VALUES(is_password_protected),
+                        password = VALUES(password),
+                        scheduled_date = VALUES(scheduled_date),
+                        images = VALUES(images),
+                        team_id = VALUES(team_id),
+                        team_name = VALUES(team_name)
+                ");
+                $stmtFallback->execute([
+                    ':id' => $data['id'],
+                    ':comic_id' => $targetComicId,
+                    ':comic_title' => $data['comicTitle'] ?? ($matchedComic['title'] ?? ''),
+                    ':chapter_number' => $targetChapNum,
+                    ':title' => $data['title'] ?? ('Chương ' . $targetChapNum),
+                    ':is_password_protected' => !empty($data['isPasswordProtected']) ? 1 : 0,
+                    ':password' => $data['password'] ?? null,
+                    ':scheduled_date' => $resolvedScheduledDate,
+                    ':views' => intval($data['views'] ?? 0),
+                    ':images' => json_encode($data['images'] ?? [], JSON_UNESCAPED_SLASHES),
+                    ':team_id' => $data['teamId'] ?? '',
+                    ':team_name' => $data['teamName'] ?? '',
+                    ':created_at' => $resolvedCreatedAt,
+                ]);
+            }
+        }
 
         // Cập nhật lại thời gian của truyện bằng thời gian thực tế của chương
         $upComic = $pdo->prepare("UPDATE comics SET updated_at = ? WHERE id = ?");
@@ -2095,6 +2075,15 @@ if ($action === 'get_teams' || $action === 'get_team_views') {
     $curMonthKey = date('Y-m'); // "2026-10"
     $curMonthSlash = date('m/Y'); // "10/2026"
 
+    // Tối ưu hóa: Lấy tổng view tháng của tất cả nhóm dịch trong 1 query duy nhất thay vì lặp qua từng nhóm
+    $vhViewsByTeam = [];
+    try {
+        $vhStmt = $pdo->query("SELECT team_id, COALESCE(SUM(views_count), 0) as vh_views FROM views_history WHERE view_date >= '2026-10-01' AND view_date <= '2026-10-31' GROUP BY team_id");
+        while ($row = $vhStmt->fetch()) {
+            $vhViewsByTeam[$row['team_id']] = intval($row['vh_views']);
+        }
+    } catch (Exception $eVh) {}
+
     foreach ($teams as &$t) {
         $rawDaily = $t['daily_views'] ?? $t['daily_views_json'] ?? '{}';
         $daily = is_string($rawDaily) ? json_decode($rawDaily ?: '{}', true) : ($rawDaily ?? []);
@@ -2112,14 +2101,13 @@ if ($action === 'get_teams' || $action === 'get_team_views') {
         }
 
         // Tính tổng lượt xem từ bảng views_history theo tháng 10/2026 (GMT+7 Asia/Ho_Chi_Minh)
-        try {
-            $vhStmt = $pdo->prepare("SELECT COALESCE(SUM(views_count), 0) as vh_views FROM views_history WHERE (team_id = ? OR team_id = ?) AND view_date >= '2026-10-01' AND view_date <= '2026-10-31'");
-            $vhStmt->execute([$t['id'], $t['name']]);
-            $vhCount = intval($vhStmt->fetchColumn() ?? 0);
-            if ($vhCount > $daily10) {
-                $daily10 = $vhCount;
-            }
-        } catch (Exception $eVh) {}
+        $vhCount = max(
+            intval($vhViewsByTeam[$t['id']] ?? 0),
+            intval($vhViewsByTeam[$t['name']] ?? 0)
+        );
+        if ($vhCount > $daily10) {
+            $daily10 = $vhCount;
+        }
 
         $m10Views = max(
             intval($monthly['2026-10'] ?? 0),
@@ -2414,18 +2402,27 @@ if ($action === 'delete_comment' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 // -----------------------------------------------------------------------------
 if ($action === 'get_reading_history') {
     $userId = $_GET['user_id'] ?? '';
-    $sql = "SELECT * FROM reading_history WHERE user_id = ? ORDER BY read_at DESC";
+    $sql = "SELECT rh.*, c.title AS comic_title, c.slug AS comic_slug, c.cover_image AS comic_cover, c.team_name AS comic_team 
+            FROM reading_history rh 
+            LEFT JOIN comics c ON rh.comic_id = c.id 
+            WHERE rh.user_id = ? 
+            ORDER BY rh.read_at DESC";
     $stmt = $pdo->prepare($sql);
     $stmt->execute([$userId]);
     $history = $stmt->fetchAll();
     foreach ($history as &$h) {
         $h['comicId'] = $h['comic_id'];
+        $h['comicTitle'] = $h['comic_title'] ?? '';
+        $h['comicSlug'] = $h['comic_slug'] ?? '';
+        $h['comicCover'] = $h['comic_cover'] ?? '';
+        $h['teamName'] = $h['comic_team'] ?? '';
         $h['chapterId'] = $h['chapter_id'];
         $h['chapterTitle'] = $h['chapter_title'];
         $h['chapterNumber'] = floatval($h['chapter_number']);
         $h['lastPage'] = intval($h['last_page']);
         $h['totalPages'] = intval($h['total_pages']);
         $h['readAt'] = $h['read_at'];
+        $h['lastReadAt'] = $h['read_at'];
     }
     sendJsonResponse(['success' => true, 'history' => $history]);
 }
@@ -2436,21 +2433,40 @@ if ($action === 'get_reading_history') {
 if ($action === 'save_reading_history' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true);
     if ($data && isset($data['comicId'])) {
-        $id = $data['id'] ?? (uniqid('hist_'));
-        $stmt = $pdo->prepare("INSERT INTO reading_history (id, user_id, comic_id, chapter_id, chapter_title, chapter_number, last_page, total_pages, read_at)
-            VALUES (:id, :user_id, :comic_id, :chapter_id, :chapter_title, :chapter_number, :last_page, :total_pages, :read_at)
-            ON DUPLICATE KEY UPDATE chapter_id=VALUES(chapter_id), chapter_title=VALUES(chapter_title), chapter_number=VALUES(chapter_number), last_page=VALUES(last_page), total_pages=VALUES(total_pages), read_at=VALUES(read_at)");
-        $stmt->execute([
-            ':id' => $id,
-            ':user_id' => $data['userId'] ?? '',
-            ':comic_id' => $data['comicId'] ?? '',
-            ':chapter_id' => $data['chapterId'] ?? '',
-            ':chapter_title' => $data['chapterTitle'] ?? '',
-            ':chapter_number' => $data['chapterNumber'] ?? 1,
-            ':last_page' => $data['lastPage'] ?? 1,
-            ':total_pages' => $data['totalPages'] ?? 1,
-            ':read_at' => $data['readAt'] ?? date('Y-m-d H:i:s'),
-        ]);
+        $userId = $data['userId'] ?? '';
+        $comicId = $data['comicId'] ?? '';
+        
+        // Kiểm tra xem truyện này đã có trong lịch sử của người dùng chưa
+        $checkStmt = $pdo->prepare("SELECT id FROM reading_history WHERE user_id = ? AND comic_id = ? LIMIT 1");
+        $checkStmt->execute([$userId, $comicId]);
+        $existing = $checkStmt->fetch();
+
+        if ($existing) {
+            $updateStmt = $pdo->prepare("UPDATE reading_history SET chapter_id = ?, chapter_title = ?, chapter_number = ?, last_page = ?, total_pages = ?, read_at = ? WHERE id = ?");
+            $updateStmt->execute([
+                $data['chapterId'] ?? '',
+                $data['chapterTitle'] ?? '',
+                $data['chapterNumber'] ?? 1,
+                $data['lastPage'] ?? 1,
+                $data['totalPages'] ?? 1,
+                $data['readAt'] ?? date('Y-m-d H:i:s'),
+                $existing['id'],
+            ]);
+        } else {
+            $id = $data['id'] ?? (uniqid('hist_'));
+            $insertStmt = $pdo->prepare("INSERT INTO reading_history (id, user_id, comic_id, chapter_id, chapter_title, chapter_number, last_page, total_pages, read_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $insertStmt->execute([
+                $id,
+                $userId,
+                $comicId,
+                $data['chapterId'] ?? '',
+                $data['chapterTitle'] ?? '',
+                $data['chapterNumber'] ?? 1,
+                $data['lastPage'] ?? 1,
+                $data['totalPages'] ?? 1,
+                $data['readAt'] ?? date('Y-m-d H:i:s'),
+            ]);
+        }
         sendJsonResponse(['success' => true, 'message' => 'Lưu lịch sử đọc thành công!']);
     }
 }
@@ -2669,11 +2685,36 @@ if ($action === 'reset_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 // -----------------------------------------------------------------------------
 if ($action === 'save_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true);
-    if ($data && isset($data['id'])) {
-        $username = $data['username'] ?? '';
+    if ($data && (isset($data['id']) || isset($data['username']) || isset($data['email']))) {
+        try {
+            $pdo->exec("ALTER TABLE users MODIFY COLUMN avatar LONGTEXT NULL");
+        } catch (Exception $eCol) {}
+
+        $username = trim($data['username'] ?? '');
+        $username = ltrim($username, '@');
         if (empty($username) && !empty($data['email'])) {
             $username = explode('@', $data['email'])[0];
         }
+
+        // Tìm kiếm ID thực tế của user trong CSDL theo id, username hoặc email
+        $existingId = null;
+        if (!empty($data['id'])) {
+            $chk = $pdo->prepare("SELECT id FROM users WHERE id = ? LIMIT 1");
+            $chk->execute([$data['id']]);
+            $existingId = $chk->fetchColumn();
+        }
+        if (!$existingId && !empty($username)) {
+            $chk = $pdo->prepare("SELECT id FROM users WHERE LOWER(username) = ? OR LOWER(username) = ? LIMIT 1");
+            $chk->execute([strtolower($username), '@' . strtolower($username)]);
+            $existingId = $chk->fetchColumn();
+        }
+        if (!$existingId && !empty($data['email'])) {
+            $chk = $pdo->prepare("SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1");
+            $chk->execute([strtolower($data['email'])]);
+            $existingId = $chk->fetchColumn();
+        }
+
+        $userId = $existingId ? $existingId : ($data['id'] ?? ('user-' . ($username ?: uniqid())));
 
         $passwordHash = null;
         if (!empty($data['password'])) {
@@ -2689,13 +2730,13 @@ if ($action === 'save_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 username=IF(VALUES(username) != '', VALUES(username), username),
                 email=VALUES(email), 
                 password_hash=IF(VALUES(password_hash) IS NOT NULL, VALUES(password_hash), password_hash),
-                avatar=VALUES(avatar), 
+                avatar=IF(VALUES(avatar) != '', VALUES(avatar), avatar), 
                 role=VALUES(role), 
                 team_id=VALUES(team_id), 
                 team_name=VALUES(team_name), 
                 can_upload=VALUES(can_upload)");
         $stmt->execute([
-            ':id' => $data['id'],
+            ':id' => $userId,
             ':name' => $data['name'] ?? '',
             ':username' => $username,
             ':email' => $data['email'] ?? '',
@@ -2707,7 +2748,16 @@ if ($action === 'save_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             ':can_upload' => !empty($data['canUpload']) ? 1 : 0,
             ':created_at' => $data['createdAt'] ?? date('Y-m-d'),
         ]);
-        sendJsonResponse(['success' => true, 'message' => 'Lưu người dùng thành công!']);
+
+        // Cập nhật avatar đồng bộ vào các bình luận của user trong MySQL
+        if (!empty($data['avatar'])) {
+            try {
+                $updCom = $pdo->prepare("UPDATE comments SET user_avatar = :av WHERE user_id = :uid");
+                $updCom->execute([':av' => $data['avatar'], ':uid' => $userId]);
+            } catch (Exception $eCm) {}
+        }
+
+        sendJsonResponse(['success' => true, 'message' => 'Lưu người dùng thành công!', 'userId' => $userId]);
     }
 }
 
@@ -2726,165 +2776,80 @@ if ($action === 'delete_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // -----------------------------------------------------------------------------
 // ROUTE: LẤY THÔNG BÁO (GET NOTIFICATIONS)
-// Xử lý an toàn tuyệt đối cho Admin, Team Leader và Reader - KHÔNG BAO GIỜ LỖI 500
 // -----------------------------------------------------------------------------
 if ($action === 'get_notifications') {
-    try {
-        $userId = trim($_GET['user_id'] ?? '');
-        $teamId = trim($_GET['team_id'] ?? '');
-        $teamName = trim($_GET['team_name'] ?? '');
-        $role = trim($_GET['role'] ?? '');
-        $limit = isset($_GET['limit']) ? min(200, max(1, intval($_GET['limit']))) : 100;
+    $userId = $_GET['user_id'] ?? '';
+    $teamId = $_GET['team_id'] ?? '';
+    $teamName = strtolower(trim($_GET['team_name'] ?? ''));
+    $role = $_GET['role'] ?? '';
+    $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 100;
 
-        // Khách vãng lai chưa đăng nhập không có hộp thư thông báo riêng
-        if (empty($userId) && empty($role)) {
-            sendJsonResponse(['success' => true, 'notifications' => []]);
-        }
-
-        $notifs = [];
-
-        if ($pdo) {
-            // Tự động kiểm tra và thêm các cột cần thiết nếu chưa có trong DB
-            safeAddColumn($pdo, 'notifications', 'recipient_user_id', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'recipient_team_id', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'recipient_team_name', 'VARCHAR(255) NULL');
-            safeAddColumn($pdo, 'notifications', 'recipient_role', 'VARCHAR(50) NULL');
-            safeAddColumn($pdo, 'notifications', 'type', "VARCHAR(50) NOT NULL DEFAULT 'COMMENT'");
-            safeAddColumn($pdo, 'notifications', 'title', 'VARCHAR(255) NOT NULL DEFAULT ""');
-            safeAddColumn($pdo, 'notifications', 'content', 'TEXT NULL');
-            safeAddColumn($pdo, 'notifications', 'sender_id', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'sender_name', 'VARCHAR(255) NULL');
-            safeAddColumn($pdo, 'notifications', 'sender_avatar', 'TEXT NULL');
-            safeAddColumn($pdo, 'notifications', 'comic_id', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'comic_title', 'VARCHAR(255) NULL');
-            safeAddColumn($pdo, 'notifications', 'comic_slug', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'chapter_number', 'FLOAT NULL');
-            safeAddColumn($pdo, 'notifications', 'comment_id', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'parent_comment_id', 'VARCHAR(191) NULL');
-            safeAddColumn($pdo, 'notifications', 'is_read', 'TINYINT(1) DEFAULT 0');
-            safeAddColumn($pdo, 'notifications', 'link', 'VARCHAR(255) NULL');
-
-            $whereParts = [];
-            $params = [];
-
-            if ($role === 'ADMIN') {
-                // Admin: xem thông báo gửi tới ADMIN, ALL, hoặc thuộc nhóm / user admin
-                $adminConds = ["recipient_role = 'ADMIN'", "recipient_role = 'ALL'"];
-                if ($userId !== '') {
-                    $adminConds[] = "recipient_user_id = ?";
-                    $params[] = $userId;
-                }
-                if ($teamId !== '') {
-                    $adminConds[] = "recipient_team_id = ?";
-                    $params[] = $teamId;
-                }
-                if ($teamName !== '') {
-                    $adminConds[] = "recipient_team_name = ?";
-                    $params[] = $teamName;
-                }
-                // Admin cũng xem các thông báo hệ thống và bình luận liên quan
-                $adminConds[] = "type != 'COMMENT'";
-                $whereParts[] = "(" . implode(" OR ", $adminConds) . ")";
-            } elseif ($role === 'TEAM_LEADER') {
-                // Team Leader: nhận thông báo gửi tới TEAM_LEADER, ALL hoặc nhóm mình / tài khoản mình
-                $leaderConds = ["recipient_role = 'TEAM_LEADER'", "recipient_role = 'ALL'"];
-                if ($userId !== '') {
-                    $leaderConds[] = "recipient_user_id = ?";
-                    $params[] = $userId;
-                }
-                if ($teamId !== '') {
-                    $leaderConds[] = "recipient_team_id = ?";
-                    $params[] = $teamId;
-                }
-                if ($teamName !== '') {
-                    $leaderConds[] = "recipient_team_name = ?";
-                    $params[] = $teamName;
-                }
-                $whereParts[] = "(" . implode(" OR ", $leaderConds) . ")";
-            } else {
-                // Reader: Nhận thông báo gửi trực tiếp cho user hoặc role READER / ALL
-                $readerConds = ["recipient_role = 'READER'", "recipient_role = 'ALL'"];
-                if ($userId !== '') {
-                    $readerConds[] = "recipient_user_id = ?";
-                    $params[] = $userId;
-                }
-                $whereParts[] = "(" . implode(" OR ", $readerConds) . ")";
-            }
-
-            $whereSql = !empty($whereParts) ? "WHERE " . implode(" AND ", $whereParts) : "WHERE 1=1";
-            $sql = "
-                SELECT id, 
-                       recipient_user_id AS recipientUserId, 
-                       recipient_team_id AS recipientTeamId, 
-                       recipient_team_name AS recipientTeamName, 
-                       recipient_role AS recipientRole, 
-                       type, title, content, 
-                       sender_id AS senderId, 
-                       sender_name AS senderName, 
-                       sender_avatar AS senderAvatar, 
-                       comic_id AS comicId, 
-                       comic_title AS comicTitle, 
-                       comic_slug AS comicSlug, 
-                       chapter_number AS chapterNumber, 
-                       comment_id AS commentId, 
-                       parent_comment_id AS parentCommentId, 
-                       is_read AS isRead, 
-                       link, 
-                       created_at AS createdAt 
-                FROM notifications 
-                {$whereSql} 
-                ORDER BY created_at DESC 
-                LIMIT {$limit}
-            ";
-
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
-            $notifs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            foreach ($notifs as &$n) {
-                $n['isRead'] = (bool)($n['isRead'] ?? 0);
-                if ($n['chapterNumber'] !== null) {
-                    $n['chapterNumber'] = floatval($n['chapterNumber']);
-                }
-            }
-            unset($n);
-        }
-
-        // Nếu database chưa có hoặc query rỗng, fallback sang data_store.json
-        if (empty($notifs)) {
-            $fallback = getFallbackDataStore();
-            $allNotifs = $fallback['notifications'] ?? [];
-            if (!empty($allNotifs)) {
-                $filtered = [];
-                foreach ($allNotifs as $n) {
-                    $mUser = !empty($userId) && ($n['recipientUserId'] ?? '') === $userId;
-                    $mTeam = !empty($teamId) && ($n['recipientTeamId'] ?? '') === $teamId;
-                    $mRole = ($n['recipientRole'] ?? '') === $role || ($n['recipientRole'] ?? '') === 'ALL';
-                    if ($role === 'ADMIN') {
-                        if (($n['type'] ?? '') !== 'COMMENT' || $mUser || $mTeam) {
-                            $filtered[] = $n;
-                        }
-                    } elseif ($role === 'TEAM_LEADER') {
-                        if ($mUser || $mTeam || $mRole) {
-                            $filtered[] = $n;
-                        }
-                    } else {
-                        if ($mUser || $mRole) {
-                            $filtered[] = $n;
-                        }
-                    }
-                }
-                $notifs = array_slice($filtered, 0, $limit);
-            }
-        }
-
-        sendJsonResponse(['success' => true, 'notifications' => $notifs]);
-    } catch (Throwable $e) {
-        @error_log("Lỗi get_notifications: " . $e->getMessage());
-        $fallback = getFallbackDataStore();
-        $fallbackNotifs = array_slice($fallback['notifications'] ?? [], 0, 50);
-        sendJsonResponse(['success' => true, 'notifications' => $fallbackNotifs, 'warning' => $e->getMessage()], 200);
+    // Khách vãng lai chưa đăng nhập không có hộp thư thông báo riêng
+    if (empty($userId) && empty($role)) {
+        sendJsonResponse(['success' => true, 'notifications' => []]);
     }
+
+    try {
+        $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient_team_name VARCHAR(255) NULL");
+        $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient_role VARCHAR(50) NULL");
+        $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS comment_id VARCHAR(191) NULL");
+        $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS parent_comment_id VARCHAR(191) NULL");
+        $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT NULL");
+    } catch (Exception $eCol) {}
+
+    $sql = "SELECT id, recipient_user_id AS recipientUserId, recipient_team_id AS recipientTeamId, recipient_team_name AS recipientTeamName, recipient_role AS recipientRole, type, title, content, sender_id AS senderId, sender_name AS senderName, sender_avatar AS senderAvatar, comic_id AS comicId, comic_title AS comicTitle, comic_slug AS comicSlug, chapter_number AS chapterNumber, comment_id AS commentId, parent_comment_id AS parentCommentId, is_read AS isRead, link, created_at AS createdAt FROM notifications WHERE 1=1";
+    $params = [];
+
+    if ($role === 'ADMIN') {
+        // Admin nhận tất cả thông báo hệ thống, bình luận, chương mới, yêu cầu mật khẩu
+        $sql .= " AND 1=1";
+    } else if ($role === 'TEAM_LEADER') {
+        $conditions = [];
+        // 1. Gửi đích danh cho user này
+        if (!empty($userId)) {
+            $conditions[] = "(recipient_user_id = :uid)";
+            $params[':uid'] = $userId;
+        }
+        // 2. Gửi cho nhóm dịch của user này
+        if (!empty($teamId)) {
+            $conditions[] = "(recipient_team_id = :tid)";
+            $params[':tid'] = $teamId;
+            if ($teamId === 'team-lessin-comic') {
+                $conditions[] = "(recipient_team_id = 'team-leesin')";
+            } elseif ($teamId === 'team-leesin') {
+                $conditions[] = "(recipient_team_id = 'team-lessin-comic')";
+            }
+        }
+        if (!empty($teamName)) {
+            $conditions[] = "(LOWER(TRIM(recipient_team_name)) = :tname)";
+            $params[':tname'] = strtolower(trim($teamName));
+        }
+        // 3. Thông báo hệ thống chung gửi tới tất cả nhóm dịch (KHÔNG phải thông báo bình luận COMMENT/REPLY)
+        $conditions[] = "(type != 'COMMENT' AND type != 'REPLY' AND recipient_team_id IS NULL AND (recipient_role = 'ALL' OR recipient_role = 'TEAM_LEADER'))";
+        $sql .= " AND (" . implode(" OR ", $conditions) . ")";
+    } else {
+        $conditions = [];
+        // 1. Gửi đích danh cho độc giả này
+        if (!empty($userId)) {
+            $conditions[] = "(recipient_user_id = :uid)";
+            $params[':uid'] = $userId;
+        }
+        // 2. Thông báo hệ thống hoặc chương mới chung cho độc giả (KHÔNG phải bình luận COMMENT/REPLY)
+        $conditions[] = "(type != 'COMMENT' AND type != 'REPLY' AND recipient_user_id IS NULL AND (recipient_role = 'ALL' OR recipient_role = 'READER'))";
+        $sql .= " AND (" . implode(" OR ", $conditions) . ")";
+    }
+
+    $sql .= " ORDER BY created_at DESC LIMIT " . $limit;
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $notifs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($notifs as &$n) {
+        $n['isRead'] = (bool)$n['isRead'];
+        if ($n['chapterNumber'] !== null) $n['chapterNumber'] = floatval($n['chapterNumber']);
+    }
+
+    sendJsonResponse(['success' => true, 'notifications' => $notifs]);
 }
 
 // -----------------------------------------------------------------------------
@@ -2894,6 +2859,14 @@ if ($action === 'save_notification' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true);
     if (!empty($data) && !empty($data['id']) && !empty($data['title'])) {
         try {
+            try {
+                $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient_team_name VARCHAR(255) NULL");
+                $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient_role VARCHAR(50) NULL");
+                $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS comment_id VARCHAR(191) NULL");
+                $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS parent_comment_id VARCHAR(191) NULL");
+                $pdo->exec("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT NULL");
+            } catch (Exception $eCol) {}
+
             $stmt = $pdo->prepare("INSERT INTO notifications (id, recipient_user_id, recipient_team_id, recipient_team_name, recipient_role, type, title, content, sender_id, sender_name, sender_avatar, comic_id, comic_title, comic_slug, chapter_number, comment_id, parent_comment_id, is_read, link, created_at)
                 VALUES (:id, :ruid, :rtid, :rtname, :rrole, :type, :title, :content, :sid, :sname, :savatar, :cid, :ctitle, :cslug, :chapnum, :commid, :pcommid, :isread, :link, :created)
                 ON DUPLICATE KEY UPDATE 
@@ -2968,7 +2941,11 @@ if ($action === 'mark_all_notifications_read' && $_SERVER['REQUEST_METHOD'] === 
     if ($role === 'ADMIN' && empty($userId)) {
         // Admin đánh dấu toàn hệ thống
     } else if ($role === 'TEAM_LEADER') {
-        $conditions = ["recipient_role = 'ALL'", "recipient_role = 'TEAM_LEADER'"];
+        $conditions = [];
+        if (!empty($userId)) {
+            $conditions[] = "recipient_user_id = :uid";
+            $params[':uid'] = $userId;
+        }
         if (!empty($teamId)) {
             $conditions[] = "recipient_team_id = :tid";
             $params[':tid'] = $teamId;
@@ -2977,13 +2954,11 @@ if ($action === 'mark_all_notifications_read' && $_SERVER['REQUEST_METHOD'] === 
             $conditions[] = "recipient_team_name = :tname";
             $params[':tname'] = $teamName;
         }
-        if (!empty($userId)) {
-            $conditions[] = "recipient_user_id = :uid";
-            $params[':uid'] = $userId;
+        if (!empty($conditions)) {
+            $sql .= " AND (" . implode(" OR ", $conditions) . ")";
         }
-        $sql .= " AND (" . implode(" OR ", $conditions) . ")";
     } else if (!empty($userId)) {
-        $sql .= " AND (recipient_user_id = :uid OR recipient_role = 'READER' OR recipient_role = 'ALL')";
+        $sql .= " AND recipient_user_id = :uid";
         $params[':uid'] = $userId;
     }
 
