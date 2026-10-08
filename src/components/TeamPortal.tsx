@@ -29,13 +29,14 @@ import {
 import confetti from 'canvas-confetti';
 import { Comic, Chapter, ScanTeam, User, ImageServerConfig, SiteSettings } from '../types';
 import { getComicLatestTimestamp } from '../utils/timeAgo';
-import { processZipFile } from '../utils/imageOptimizer';
+import { processZipFile, processMultipleImageFiles } from '../utils/imageOptimizer';
 import { uploadImagesToTachServer } from '../utils/imageServerUploader';
 import { TeamAddComicModal } from './TeamAddComicModal';
 import { TeamEditComicModal } from './TeamEditComicModal';
 import { TeamEditChapterModal } from './TeamEditChapterModal';
 import { TeamProfileEditModal } from './TeamProfileEditModal';
 import { TeamDonationCard } from './TeamDonationCard';
+import { toSlug } from '../utils/slug';
 import { formatRelativeTime, formatDateTime } from '../utils/timeAgo';
 import {
   getEffectiveComicViews,
@@ -147,12 +148,14 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
   const [chapterPassword, setChapterPassword] = useState<string>('');
 
   // ZIP Upload & Image Processing
+  const [chapterUploadMethod, setChapterUploadMethod] = useState<'zip' | 'files'>('zip');
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [isProcessingZip, setIsProcessingZip] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [processedPages, setProcessedPages] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string>('');
   const [uploadSuccess, setUploadSuccess] = useState<string>('');
+  const [applyCanvasWatermark, setApplyCanvasWatermark] = useState<boolean>(false);
 
   // CDN Upload states (tachserver.site)
   const [uploadToCdn, setUploadToCdn] = useState<boolean>(imageServerConfig?.autoUploadToCdn ?? true);
@@ -189,6 +192,42 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
     setTimeout(() => setActionSuccessMsg(''), 4000);
   };
 
+  // Handle Multiple Loose Image Files Upload
+  const handleMultipleFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsProcessingZip(true);
+    setProcessingProgress(10);
+    setUploadError('');
+
+    try {
+      const fileArray = Array.from(files) as File[];
+      const images = await processMultipleImageFiles(
+        fileArray,
+        (progress) => {
+          setProcessingProgress(progress);
+        },
+        {
+          logoUrl: applyCanvasWatermark ? watermarkLogoUrl : undefined,
+          opacity: watermarkOpacity,
+          position: watermarkPosition || 'bottom-right',
+          maxWidth: 2560,
+          quality: 0.96,
+          mode: 'logo',
+        }
+      );
+
+      setProcessedPages(images);
+      setIsProcessingZip(false);
+      setProcessingProgress(100);
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
+    } catch (err: any) {
+      setIsProcessingZip(false);
+      setUploadError(err.message || 'Lỗi khi xử lý danh sách file ảnh!');
+    }
+  };
+
   // Handle ZIP File Upload & Auto Watermark Optimization
   const handleZipFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -206,7 +245,7 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
           setProcessingProgress(progress);
         },
         {
-          logoUrl: watermarkLogoUrl,
+          logoUrl: applyCanvasWatermark ? watermarkLogoUrl : undefined,
           opacity: watermarkOpacity,
           position: watermarkPosition || 'bottom-right',
           maxWidth: 2560,
@@ -825,7 +864,7 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
                                       )}
                                     </div>
                                     <p className="text-[11px] text-slate-400 mt-0.5">
-                                      {chap.images.length} trang ảnh • Ngày đăng: {formatDateTime(chap.createdAt) || formatRelativeTime(chap.createdAt)} • {chap.views.toLocaleString()} views
+                                      {(chap.pageCount ?? (Array.isArray(chap.images) && chap.images.length > 0 ? chap.images.length : null) ?? 0)} trang ảnh • Ngày đăng: {formatDateTime(chap.createdAt) || formatRelativeTime(chap.createdAt)} • {chap.views.toLocaleString()} views
                                     </p>
                                   </div>
                                 </div>
@@ -942,6 +981,19 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
                   className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs p-3 rounded-xl focus:outline-none focus:border-emerald-500"
                   required
                 />
+                {(() => {
+                  const selObj = teamComics.find((c) => c.id === selectedComicId);
+                  const isDup = Boolean(
+                    selObj &&
+                    (selObj.chapters || []).some((ch) => Number(ch.chapterNumber) === Number(chapterNumber))
+                  );
+                  if (!isDup) return null;
+                  return (
+                    <p className="text-[11px] text-amber-400 mt-1.5 flex items-center gap-1 font-medium bg-amber-500/10 border border-amber-500/30 p-2 rounded-lg">
+                      ⚠️ Chap {chapterNumber} đã có sẵn trong bộ truyện này. Xuất bản sẽ tự động cập nhật / thay thế nội dung Chap {chapterNumber}.
+                    </p>
+                  );
+                })()}
               </div>
 
               <div>
@@ -1022,55 +1074,150 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
               </div>
             </div>
 
-            {/* ZIP Upload Section */}
+            {/* Upload Section: ZIP or Multiple Image Files */}
             <div className="space-y-3">
-              <label className="block text-xs font-bold text-slate-200">
-                Tải Lên File ZIP Chứa Toàn Bộ Ảnh Truyện:
-              </label>
-
-              <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 rounded-2xl p-6 text-center bg-slate-900/30 transition-colors">
-                <FileArchive className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-                <p className="text-sm font-bold text-slate-200">
-                  {zipFile ? zipFile.name : 'Chọn hoặc kéo thả file .ZIP vào đây'}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  File nén chứa tất cả ảnh truyện (01.jpg, 02.jpg...). Hệ thống sẽ tự động tối ưu kích thước và đóng dấu logo website!
-                </p>
-
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                  <label
-                    htmlFor="zip-upload-input"
-                    className={`px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs cursor-pointer shadow transition-all ${
-                      !canUpload ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                  >
-                    <span>Chọn File .ZIP Từ Máy Tính</span>
-                    <input
-                      id="zip-upload-input"
-                      type="file"
-                      accept=".zip,application/zip"
-                      onChange={handleZipFileChange}
-                      disabled={!canUpload}
-                      className="hidden"
-                    />
-                  </label>
-
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <label className="block text-xs font-bold text-slate-200">
+                  Tải Lên Ảnh Cho Chương Truyện:
+                </label>
+                <div className="flex p-1 bg-slate-900 rounded-xl border border-slate-800 text-[11px] self-start sm:self-auto">
                   <button
                     type="button"
-                    onClick={handleGenerateSamplePages}
-                    disabled={!canUpload || isProcessingZip}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition-all"
+                    onClick={() => setChapterUploadMethod('zip')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                      chapterUploadMethod === 'zip'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
                   >
-                    ⚡ Tạo Nhanh Bộ Ảnh Mẫu Kèm Watermark
+                    <FileArchive className="w-3.5 h-3.5" />
+                    <span>File Nén .ZIP</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChapterUploadMethod('files')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                      chapterUploadMethod === 'files'
+                        ? 'bg-amber-500 text-slate-950 shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Nhiều Ảnh Rời (JPG/PNG/WEBP)</span>
                   </button>
                 </div>
               </div>
+
+              {chapterUploadMethod === 'zip' ? (
+                <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 rounded-2xl p-6 text-center bg-slate-900/30 transition-colors">
+                  <FileArchive className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
+                  <p className="text-sm font-bold text-slate-200">
+                    {zipFile ? zipFile.name : 'Chọn hoặc kéo thả file .ZIP vào đây'}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    File nén chứa tất cả ảnh truyện (01.jpg, 02.jpg...). Hệ thống sẽ tự động tối ưu kích thước và sắp xếp theo số trang!
+                  </p>
+
+                  {/* Watermark Choice */}
+                  <div className="mt-3 flex items-center justify-center">
+                    <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-amber-500/50 cursor-pointer text-xs text-slate-300 select-none">
+                      <input
+                        type="checkbox"
+                        checked={applyCanvasWatermark}
+                        onChange={(e) => setApplyCanvasWatermark(e.target.checked)}
+                        className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                      />
+                      <span>In chìm logo Watermark vào ảnh (Mặc định tắt vì website đã có lớp Watermark tự động ngoài trình đọc)</span>
+                    </label>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+                    <label
+                      htmlFor="zip-upload-input"
+                      className={`px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs cursor-pointer shadow transition-all ${
+                        !canUpload ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      <span>Chọn File .ZIP Từ Máy Tính</span>
+                      <input
+                        id="zip-upload-input"
+                        type="file"
+                        accept=".zip,application/zip,application/x-zip-compressed"
+                        onChange={handleZipFileChange}
+                        disabled={!canUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={handleGenerateSamplePages}
+                      disabled={!canUpload || isProcessingZip}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition-all"
+                    >
+                      ⚡ Tạo Nhanh Bộ Ảnh Mẫu Kèm Watermark
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-slate-700 hover:border-amber-500/70 rounded-2xl p-6 text-center bg-slate-900/30 transition-colors">
+                  <UploadCloud className="w-10 h-10 text-amber-400 mx-auto mb-2" />
+                  <p className="text-sm font-bold text-slate-200">
+                    Chọn nhiều ảnh JPG, PNG, WEBP từ máy tính
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Chọn cùng lúc nhiều file ảnh (01.jpg, 02.jpg...). Hệ thống sẽ tự động tối ưu kích thước và sắp xếp thứ tự trang chuẩn xác!
+                  </p>
+
+                  {/* Watermark Choice */}
+                  <div className="mt-3 flex items-center justify-center">
+                    <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-amber-500/50 cursor-pointer text-xs text-slate-300 select-none">
+                      <input
+                        type="checkbox"
+                        checked={applyCanvasWatermark}
+                        onChange={(e) => setApplyCanvasWatermark(e.target.checked)}
+                        className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                      />
+                      <span>In chìm logo Watermark vào ảnh (Mặc định tắt vì website đã có lớp Watermark tự động ngoài trình đọc)</span>
+                    </label>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+                    <label
+                      htmlFor="files-upload-input"
+                      className={`px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer shadow transition-all ${
+                        !canUpload ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      <span>Chọn Nhiều Ảnh Từ Máy Tính</span>
+                      <input
+                        id="files-upload-input"
+                        type="file"
+                        multiple
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={handleMultipleFilesChange}
+                        disabled={!canUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={handleGenerateSamplePages}
+                      disabled={!canUpload || isProcessingZip}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition-all"
+                    >
+                      ⚡ Tạo Nhanh Bộ Ảnh Mẫu
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Processing Progress */}
               {isProcessingZip && (
                 <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 space-y-2">
                   <div className="flex justify-between text-xs font-bold">
-                    <span className="text-amber-400">Đang giải nén, resize ảnh & đóng dấu watermark...</span>
+                    <span className="text-amber-400">Đang giải nén, resize ảnh & tối ưu dung lượng...</span>
                     <span className="text-white">{processingProgress}%</span>
                   </div>
                   <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -1113,21 +1260,21 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
               )}
             </div>
 
-            {/* CDN Options - Only visible to Admin */}
-            {currentUser.role === 'ADMIN' && (
+            {/* CDN Options - Visible to Admin & Team Leader if imageServerConfig is enabled */}
+            {(currentUser.role === 'ADMIN' || currentUser.role === 'TEAM_LEADER' || isLeader) && imageServerConfig?.enabled && (
               <div className="p-4 bg-slate-900/60 rounded-2xl border border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Server className="w-5 h-5 text-emerald-400" />
                   <div>
                     <p className="text-xs font-bold text-white">Tự Động Đẩy Ảnh Lên CDN tachserver.site</p>
-                    <p className="text-[11px] text-slate-400">Giúp tăng tốc độ tải ảnh truyện x10 lần cho độc giả</p>
+                    <p className="text-[11px] text-slate-400">Giúp tăng tốc độ tải ảnh truyện x10 lần cho độc giả và giảm tải server</p>
                   </div>
                 </div>
                 <input
                   type="checkbox"
                   checked={uploadToCdn}
                   onChange={(e) => setUploadToCdn(e.target.checked)}
-                  className="w-4 h-4 accent-emerald-500 rounded"
+                  className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
                 />
               </div>
             )}
@@ -1246,6 +1393,13 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
           onClose={() => setEditingChapterData(null)}
           comicTitle={editingChapterData.comic.title}
           chapter={editingChapterData.chapter}
+          comicId={editingChapterData.comic.id}
+          comicSlug={
+            editingChapterData.comic.slug ||
+            toSlug(editingChapterData.comic.title) ||
+            editingChapterData.comic.id?.replace(/^comic-/, '')
+          }
+          imageServerConfig={imageServerConfig}
           watermarkLogoUrl={watermarkLogoUrl}
           watermarkOpacity={watermarkOpacity}
           watermarkPosition={watermarkPosition}

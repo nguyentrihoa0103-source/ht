@@ -7,6 +7,7 @@ interface CensoredCoverImageProps {
   alt: string;
   comicId?: string;
   genres?: string[];
+  is18Plus?: boolean;
   is18PlusOverride?: boolean;
   className?: string;
   imageClassName?: string;
@@ -23,6 +24,7 @@ export const CensoredCoverImage: React.FC<CensoredCoverImageProps> = React.memo(
   alt,
   comicId = '',
   genres = [],
+  is18Plus,
   is18PlusOverride,
   className = '',
   imageClassName = '',
@@ -33,7 +35,9 @@ export const CensoredCoverImage: React.FC<CensoredCoverImageProps> = React.memo(
   showBadge = true,
   onClick,
 }) => {
-  const is18 = is18PlusOverride !== undefined ? is18PlusOverride : is18PlusComic(genres);
+  const is18 = is18PlusOverride !== undefined 
+    ? is18PlusOverride 
+    : (is18Plus !== undefined ? is18Plus : is18PlusComic(genres));
   const [isRevealed, setIsRevealed] = useState<boolean>(() => {
     if (!is18) return true;
     return isComicCoverRevealed(comicId);

@@ -92,7 +92,11 @@ if (!empty($_POST['single_base64'])) {
         if ($ext === 'jpeg') $ext = 'jpg';
         $decoded = base64_decode($data);
         
-        $fileName = ($uploadType === 'cover' ? 'cover_' : 'img_') . time() . '_' . rand(100, 999) . '.' . $ext;
+        if ($uploadType === 'chapter' && isset($_POST['page_number']) && intval($_POST['page_number']) > 0) {
+            $fileName = sprintf("%03d", intval($_POST['page_number'])) . "." . $ext;
+        } else {
+            $fileName = ($uploadType === 'cover' ? 'cover_' : 'img_') . time() . '_' . rand(100, 999) . '.' . $ext;
+        }
         $filePath = $targetDir . "/" . $fileName;
         file_put_contents($filePath, $decoded);
         
@@ -253,6 +257,56 @@ export const uploadImagesToTachServer = async (
     };
   }
 
+  // Nếu toàn bộ ảnh đã là link URL từ xa (không có base64 hay blob), không cần upload lại
+  const hasBase64 = images.some((img) => img.startsWith('data:') || img.startsWith('blob:'));
+  if (!hasBase64) {
+    if (onProgress) onProgress(100, images.length, images.length);
+    return {
+      urls: images,
+      isRealRemote: true,
+      message: 'Toàn bộ ảnh đã là link URL từ xa, không cần upload lại.',
+    };
+  }
+
+  const versionTimestamp = Date.now();
+  const allAreBase64 = images.every((img) => img.startsWith('data:') || img.startsWith('blob:'));
+  if (!allAreBase64) {
+    // Mảng kết hợp: chỉ upload các ảnh base64 mới thêm vào/thay thế, gán timestamp version để xóa cache CDN
+    const resultUrls = [...images];
+    let processedCount = 0;
+    const base64List = images
+      .map((img, idx) => ({ img, idx }))
+      .filter((item) => item.img.startsWith('data:') || item.img.startsWith('blob:'));
+
+    for (const item of base64List) {
+      try {
+        const upRes = await uploadSingleImageToTachServer(
+          item.img,
+          'chapter',
+          comicSlug || 'comic',
+          config,
+          chapterNumber,
+          item.idx
+        );
+        if (upRes.url && upRes.url !== item.img) {
+          resultUrls[item.idx] = upRes.url;
+        }
+      } catch (e) {
+        console.warn('Lỗi tải ảnh đơn lên CDN:', e);
+      }
+      processedCount++;
+      if (onProgress) {
+        onProgress(Math.round((processedCount / base64List.length) * 100), processedCount, base64List.length);
+      }
+    }
+
+    return {
+      urls: resultUrls,
+      isRealRemote: true,
+      message: `Đã cập nhật ${processedCount} ảnh mới lên ${config.targetDomain}!`,
+    };
+  }
+
   // Batch images into chunks to prevent payload too large errors
   const CHUNK_SIZE = 8; // 8 images per request
   const total = images.length;
@@ -318,12 +372,18 @@ export const uploadImagesToTachServer = async (
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
     allUploadedUrls.sort((a, b) => collator.compare(a, b));
 
+    // Thêm tham số version (?v=timestamp) để trình duyệt và CDN Cloudflare xóa bỏ cache cũ, hiển thị ảnh mới thay thế ngay lập tức!
+    const cacheBustedUrls = allUploadedUrls.map((url) => {
+      const clean = url.split('?')[0];
+      return `${clean}?v=${versionTimestamp}`;
+    });
+
     if (onProgress) onProgress(100, total, total);
 
     return {
-      urls: allUploadedUrls,
+      urls: cacheBustedUrls,
       isRealRemote: true,
-      message: `Đã tải lên thành công ${allUploadedUrls.length} ảnh sang ${config.targetDomain}!`,
+      message: `Đã tải lên thành công ${cacheBustedUrls.length} ảnh sang ${config.targetDomain}!`,
     };
   } catch (err: any) {
     console.warn('Lỗi khi gửi trực tiếp tới tachserver.site:', err.message);
@@ -340,13 +400,15 @@ export const uploadImagesToTachServer = async (
 };
 
 /**
- * Upload single image (Cover image or Avatar) to tachserver.site
+ * Upload single image (Cover image, Avatar, or specific Chapter page) to tachserver.site
  */
 export const uploadSingleImageToTachServer = async (
   base64Data: string,
-  type: 'cover' | 'avatar' | string = 'cover',
+  type: 'cover' | 'avatar' | 'chapter' | string = 'cover',
   identifier: string = 'comic', // comicSlug or userId
-  config?: ImageServerConfig
+  config?: ImageServerConfig,
+  chapterNumber?: number,
+  pageIndex?: number
 ): Promise<{
   url: string;
   isRealRemote: boolean;
@@ -365,6 +427,12 @@ export const uploadSingleImageToTachServer = async (
     formData.append('api_key', config.apiKey);
     formData.append('upload_type', type);
     formData.append('comic_slug', identifier || 'cover');
+    if (chapterNumber !== undefined) {
+      formData.append('chapter_number', chapterNumber.toString());
+    }
+    if (pageIndex !== undefined) {
+      formData.append('page_number', (pageIndex + 1).toString());
+    }
     formData.append('single_base64', base64Data);
 
     const controller = new AbortController();
@@ -384,8 +452,11 @@ export const uploadSingleImageToTachServer = async (
     if (response.ok) {
       const result = await response.json();
       if (result.success && Array.isArray(result.image_urls) && result.image_urls.length > 0) {
+        const rawUrl = result.image_urls[0];
+        const cleanUrl = rawUrl.split('?')[0];
+        const bustedUrl = `${cleanUrl}?v=${Date.now()}`;
         return {
-          url: result.image_urls[0],
+          url: bustedUrl,
           isRealRemote: true,
           message: 'Đã tải ảnh lên server tachserver.site thành công!',
         };
@@ -402,4 +473,3 @@ export const uploadSingleImageToTachServer = async (
     message: 'Lưu trữ ảnh bìa thành công.',
   };
 };
-

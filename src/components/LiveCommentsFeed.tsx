@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   MessageSquare,
   Send,
@@ -18,7 +18,7 @@ import {
   X,
   Target
 } from 'lucide-react';
-import { ChapterComment, User, Comic } from '../types';
+import { ChapterComment, User, Comic, Chapter } from '../types';
 import { formatRelativeTime } from '../utils/timeAgo';
 
 interface LiveCommentsFeedProps {
@@ -35,6 +35,8 @@ interface LiveCommentsFeedProps {
   chapterFilter?: number; // If filtered to a specific chapter
   showComicInfo?: boolean; // Whether to show comic cover & title in each card
   highlightedCommentId?: string | null;
+  currentComic?: Comic | null;
+  currentChapter?: Chapter | null;
 }
 
 const QUICK_EMOJIS = ['❤️', '🔥', '😍', '😂', '👏', '😭', '🚀', '👍', '⚡', '💯', '👑', '✨'];
@@ -53,6 +55,8 @@ export const LiveCommentsFeed: React.FC<LiveCommentsFeedProps> = ({
   chapterFilter,
   showComicInfo = true,
   highlightedCommentId,
+  currentComic,
+  currentChapter,
 }) => {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -61,41 +65,104 @@ export const LiveCommentsFeed: React.FC<LiveCommentsFeedProps> = ({
     userId: string;
     userName: string;
     content: string;
+    comicId?: string;
+    comicTitle?: string;
+    comicSlug?: string;
+    coverImage?: string;
+    chapterId?: string;
+    chapterNumber?: number;
+    chapterTitle?: string;
   } | null>(null);
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Filter if needed
-  const filteredComments = comments.filter((c) => {
-    if (comicFilter && c.comicId !== comicFilter && c.comicSlug !== comicFilter) return false;
-    if (chapterFilter !== undefined && c.chapterNumber !== chapterFilter) return false;
-    return true;
-  });
+  // Available chapters sorted descending for chapter selector
+  const sortedChapters = useMemo(() => {
+    if (!currentComic?.chapters || !Array.isArray(currentComic.chapters)) return [];
+    return [...currentComic.chapters].sort((a, b) => Number(b.chapterNumber) - Number(a.chapterNumber));
+  }, [currentComic]);
+
+  const defaultChapterNum = useMemo(() => {
+    if (chapterFilter !== undefined && chapterFilter !== null) return Number(chapterFilter);
+    if (currentChapter?.chapterNumber !== undefined) return Number(currentChapter.chapterNumber);
+    if (sortedChapters.length > 0) return Number(sortedChapters[0].chapterNumber);
+    return 1;
+  }, [chapterFilter, currentChapter, sortedChapters]);
+
+  const [selectedChapterNum, setSelectedChapterNum] = useState<number>(defaultChapterNum);
+
+  useEffect(() => {
+    setSelectedChapterNum(defaultChapterNum);
+  }, [defaultChapterNum]);
+
+  // Filter if needed (memoized, guarantees highlighted comment is NEVER filtered out)
+  const filteredComments = useMemo(() => {
+    const cleanComicFilter = (comicFilter || currentComic?.id || '').trim().toLowerCase();
+    const cleanComicWithoutPrefix = cleanComicFilter.replace(/^comic-/, '');
+    const cleanComicSlug = (currentComic?.slug || '').trim().toLowerCase();
+
+    return comments.filter((c) => {
+      // If this is the highlighted comment from notification, ALWAYS include it
+      if (highlightedCommentId && (c.id === highlightedCommentId || (c.parentId && c.parentId === highlightedCommentId))) {
+        return true;
+      }
+
+      if (cleanComicFilter) {
+        const cId = (c.comicId || '').trim().toLowerCase();
+        const cSlug = (c.comicSlug || '').trim().toLowerCase();
+        const cWithoutPrefix = cId.replace(/^comic-/, '');
+        const matchComic =
+          cId === cleanComicFilter ||
+          (cleanComicSlug && (cSlug === cleanComicSlug || cId === cleanComicSlug)) ||
+          cSlug === cleanComicFilter ||
+          cWithoutPrefix === cleanComicWithoutPrefix;
+        if (!matchComic) return false;
+      }
+
+      if (chapterFilter !== undefined && chapterFilter !== null) {
+        const numFilter = Number(chapterFilter);
+        const cNum = Number(c.chapterNumber);
+        if (!isNaN(numFilter) && !isNaN(cNum) && cNum !== numFilter) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [comments, comicFilter, currentComic, chapterFilter, highlightedCommentId]);
 
   // Handle direct navigation & smooth scrolling to the target comment
   useEffect(() => {
-    if (highlightedCommentId) {
-      setActiveHighlightId(highlightedCommentId);
+    if (!highlightedCommentId) return;
 
-      // Smooth scroll after mount / render
-      const scrollTimer = setTimeout(() => {
-        const element = document.getElementById(`comment-${highlightedCommentId}`);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setActiveHighlightId(highlightedCommentId);
+
+    // Repeated attempts to locate and smoothly scroll to the comment
+    // Handles dynamic layout shifts, image loading in reader, and React re-renders
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      const element = document.getElementById(`comment-${highlightedCommentId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (attempts >= 4) {
+          clearInterval(interval);
         }
-      }, 300);
+      } else if (attempts >= 15) {
+        clearInterval(interval);
+      }
+    }, 200);
 
-      // Keep highlight glowing for 6 seconds then gently fade
-      const clearTimer = setTimeout(() => {
-        setActiveHighlightId(null);
-      }, 6000);
+    // Keep highlight glowing for 6 seconds then gently fade
+    const clearTimer = setTimeout(() => {
+      setActiveHighlightId(null);
+    }, 6000);
 
-      return () => {
-        clearTimeout(scrollTimer);
-        clearTimeout(clearTimer);
-      };
-    }
+    return () => {
+      clearInterval(interval);
+      clearTimeout(clearTimer);
+    };
   }, [highlightedCommentId, filteredComments.length]);
 
   const handleAddEmoji = (emoji: string) => {
@@ -112,7 +179,17 @@ export const LiveCommentsFeed: React.FC<LiveCommentsFeedProps> = ({
       userId: comment.userId,
       userName: comment.userName,
       content: comment.content,
+      comicId: comment.comicId,
+      comicTitle: comment.comicTitle,
+      comicSlug: comment.comicSlug,
+      coverImage: comment.coverImage,
+      chapterId: comment.chapterId,
+      chapterNumber: comment.chapterNumber,
+      chapterTitle: comment.chapterTitle,
     });
+    if (comment.chapterNumber !== undefined) {
+      setSelectedChapterNum(Number(comment.chapterNumber));
+    }
     if (inputRef.current) {
       inputRef.current.focus();
     }
@@ -137,22 +214,31 @@ export const LiveCommentsFeed: React.FC<LiveCommentsFeedProps> = ({
     const authorRole = currentUser.role || 'READER';
     const authorId = currentUser.id;
 
-    // Use default comic/chap if not set
-    const targetComicTitle = comicFilter || (filteredComments[0]?.comicTitle || 'Truyện Mới');
-    const targetComicSlug = comicFilter || (filteredComments[0]?.comicSlug || 'truyen-moi');
+    // Use concrete comic & chapter data
+    const targetComicTitle = replyingTo?.comicTitle || currentComic?.title || (filteredComments[0]?.comicTitle || 'Truyện Mới');
+    const targetComicSlug = replyingTo?.comicSlug || currentComic?.slug || (filteredComments[0]?.comicSlug || 'truyen-moi');
+    const targetComicId = replyingTo?.comicId || currentComic?.id || comicFilter || 'comic-general';
     const targetCover =
+      replyingTo?.coverImage ||
+      currentComic?.coverImage ||
       filteredComments[0]?.coverImage ||
       'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=300';
-    const targetChapterId = 'chap-custom';
-    const targetChapterNum = chapterFilter !== undefined ? chapterFilter : 1;
+
+    const targetChapterNum = replyingTo?.chapterNumber !== undefined
+      ? Number(replyingTo.chapterNumber)
+      : (chapterFilter !== undefined ? Number(chapterFilter) : Number(selectedChapterNum || 1));
+
+    const matchedChap = sortedChapters.find((ch) => Number(ch.chapterNumber) === targetChapterNum) || currentChapter;
+    const targetChapterId = replyingTo?.chapterId || matchedChap?.id || `chap-${targetChapterNum}`;
+    const targetChapterTitle = replyingTo?.chapterTitle || matchedChap?.title || `Chương ${targetChapterNum}`;
 
     onAddComment({
-      comicId: comicFilter || 'comic-general',
+      comicId: targetComicId,
       comicTitle: targetComicTitle,
       comicSlug: targetComicSlug,
       chapterId: targetChapterId,
       chapterNumber: targetChapterNum,
-      chapterTitle: `Chương ${targetChapterNum}`,
+      chapterTitle: targetChapterTitle,
       coverImage: targetCover,
       userId: authorId,
       userName: authorName,
@@ -239,6 +325,38 @@ export const LiveCommentsFeed: React.FC<LiveCommentsFeedProps> = ({
               </button>
             </div>
           )}
+
+          {/* Chapter Selector or Current Chapter Indicator */}
+          {sortedChapters.length > 0 && chapterFilter === undefined ? (
+            <div className="flex items-center gap-2 px-1 text-xs">
+              <span className="text-slate-400 font-medium flex items-center gap-1">
+                <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                <span>Bình luận tại:</span>
+              </span>
+              <select
+                value={selectedChapterNum}
+                onChange={(e) => setSelectedChapterNum(Number(e.target.value))}
+                className="bg-slate-900 border border-slate-700 hover:border-amber-500/50 rounded-lg px-2.5 py-1 text-xs text-amber-300 font-bold font-mono focus:outline-none focus:border-amber-500 cursor-pointer"
+                title="Chọn chương bạn muốn bình luận"
+              >
+                {sortedChapters.map((ch) => (
+                  <option key={ch.id || ch.chapterNumber} value={ch.chapterNumber} className="bg-slate-900 text-slate-200">
+                    Chap {ch.chapterNumber}{ch.title && ch.title !== `Chap ${ch.chapterNumber}` ? ` - ${ch.title}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (chapterFilter !== undefined || currentChapter?.chapterNumber !== undefined) ? (
+            <div className="flex items-center gap-2 px-1 text-xs">
+              <span className="text-slate-400 font-medium flex items-center gap-1">
+                <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                <span>Đang bình luận tại:</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 font-bold font-mono text-xs border border-amber-500/30">
+                {currentChapter?.title || `Chap ${chapterFilter ?? currentChapter?.chapterNumber}`}
+              </span>
+            </div>
+          ) : null}
 
           <div className="relative flex items-center gap-2">
             <div className="relative flex-1">
@@ -408,26 +526,30 @@ export const LiveCommentsFeed: React.FC<LiveCommentsFeedProps> = ({
                   </div>
 
                   {/* Comic / Chapter Breadcrumb Tag */}
-                  {showComicInfo && (
-                    <div className="flex items-center gap-1.5 text-[11px] mb-1.5 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => onNavigateToComic(comment.comicSlug)}
-                        className="font-bold text-slate-300 hover:text-amber-400 truncate max-w-[180px] transition-colors cursor-pointer"
-                        title={comment.comicTitle}
-                      >
-                        {comment.comicTitle}
-                      </button>
-                      <span className="text-slate-600">•</span>
-                      <button
-                        type="button"
-                        onClick={() => onNavigateToChapter(comment.comicSlug, comment.chapterNumber)}
-                        className="px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-mono text-[10px] font-bold transition-colors cursor-pointer"
-                      >
-                        Chap {comment.chapterNumber}
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 text-[11px] mb-1.5 flex-wrap">
+                    {showComicInfo && comment.comicTitle && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onNavigateToComic(comment.comicSlug || currentComic?.slug || '')}
+                          className="font-bold text-slate-300 hover:text-amber-400 truncate max-w-[180px] transition-colors cursor-pointer"
+                          title={comment.comicTitle}
+                        >
+                          {comment.comicTitle}
+                        </button>
+                        <span className="text-slate-600">•</span>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToChapter(comment.comicSlug || currentComic?.slug || '', comment.chapterNumber)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 font-mono text-[11px] font-bold border border-amber-500/30 transition-colors cursor-pointer"
+                      title={`Bình luận tại Chap ${comment.chapterNumber} - Bấm để chuyển đến đọc chương`}
+                    >
+                      <BookOpen className="w-3 h-3 text-amber-400" />
+                      <span>{comment.chapterTitle || `Chap ${comment.chapterNumber}`}</span>
+                    </button>
+                  </div>
 
                   {/* Comment Text */}
                   <div className="text-xs sm:text-[13px] text-slate-300 leading-relaxed break-words">

@@ -90,11 +90,6 @@ export const Header: React.FC<HeaderProps> = ({
   const [isGenresOpen, setIsGenresOpen] = useState(false);
   const [isRankingOpen, setIsRankingOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [logoError, setLogoError] = useState(false);
-
-  useEffect(() => {
-    setLogoError(false);
-  }, [siteSettings?.logoUrl]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const genresDropdownRef = useRef<HTMLDivElement>(null);
@@ -229,7 +224,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
               className="flex items-center gap-2.5 text-left group focus:outline-none"
             >
-              {siteSettings?.logoUrl && !logoError ? (
+              {siteSettings?.logoUrl && (
                 <div
                   className="flex items-center transition-all"
                   style={{
@@ -249,28 +244,8 @@ export const Header: React.FC<HeaderProps> = ({
                     }}
                     className="w-auto object-contain drop-shadow transition-all"
                     referrerPolicy="no-referrer"
-                    onError={() => setLogoError(true)}
                   />
                 </div>
-              ) : (
-                <>
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 via-pink-500 to-amber-400 p-0.5 shadow-lg shadow-rose-500/20 group-hover:scale-105 transition-transform">
-                    <div className="w-full h-full bg-[#0f1117] rounded-[10px] flex items-center justify-center">
-                      <BookOpen className="w-5 h-5 text-rose-400" />
-                    </div>
-                  </div>
-                  <div className="leading-tight">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-extrabold text-xl tracking-tight bg-gradient-to-r from-rose-400 via-pink-200 to-amber-300 bg-clip-text text-transparent">
-                        {siteSettings?.siteName || 'Leesin Comic'}
-                      </span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                        {siteSettings?.headerBadgeText || 'COMIC'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 font-medium">leesincomic.com</p>
-                  </div>
-                </>
               )}
             </button>
 
@@ -436,11 +411,11 @@ export const Header: React.FC<HeaderProps> = ({
               id="header-search-btn"
               type="button"
               onClick={() => setIsSearchModalOpen(true)}
-              className="flex items-center gap-1.5 p-2 sm:px-2.5 sm:py-1.5 rounded-full bg-slate-800/80 hover:bg-slate-700/90 border border-slate-700/80 text-slate-300 hover:text-white transition-all shadow-sm group active:scale-95 cursor-pointer shrink-0"
+              className="relative p-2 rounded-full transition-all flex items-center justify-center cursor-pointer bg-slate-800/80 hover:bg-slate-700/80 text-amber-400 border border-slate-700/80 hover:border-amber-500/40"
               title="Tìm kiếm truyện (Ctrl+K)"
               aria-label="Tìm kiếm truyện"
             >
-              <Search className="w-4 h-4 text-slate-400 group-hover:text-amber-400 transition-colors shrink-0" />
+              <Search className="w-5 h-5 text-slate-400 group-hover:text-amber-400 transition-colors shrink-0" />
               <span className="text-xs text-slate-400 group-hover:text-slate-200 hidden 2xl:inline">
                 Tìm kiếm...
               </span>
@@ -474,6 +449,7 @@ export const Header: React.FC<HeaderProps> = ({
                     src={currentUser.avatar}
                     alt={currentUser.name}
                     className="w-7 h-7 rounded-full object-cover border border-amber-500/50"
+                    referrerPolicy="no-referrer"
                   />
                   <div className="text-left hidden 2xl:block">
                     <p className="text-xs font-semibold text-slate-200 truncate max-w-[120px]">
@@ -589,7 +565,7 @@ export const Header: React.FC<HeaderProps> = ({
                 className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition-all active:scale-95"
               >
                 <LogIn className="w-4 h-4" />
-                <span>Đăng Nhập Ngay</span>
+                <span>Đăng Nhập</span>
               </button>
             )}
 
@@ -835,6 +811,7 @@ export const Header: React.FC<HeaderProps> = ({
                             alt={comic.title}
                             comicId={comic.id}
                             genres={comic.genres}
+                            is18Plus={comic.is18Plus}
                             size="xs"
                             showBadge={false}
                             className="w-full h-full"
@@ -847,7 +824,7 @@ export const Header: React.FC<HeaderProps> = ({
                             <p className="text-sm font-semibold text-slate-800 group-hover:text-blue-600 truncate">
                               {comic.title}
                             </p>
-                            {is18PlusComic(comic.genres) && (
+                            {is18PlusComic(comic) && (
                               <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.2 rounded shrink-0">
                                 18+
                               </span>

@@ -86,7 +86,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [passwordError, setPasswordError] = useState('');
   const [readerWidth, setReaderWidth] = useState<'normal' | 'wide' | 'full'>('normal');
   const [readerBg, setReaderBg] = useState<string>(() => {
-    return siteSettings?.readerBg || '#555555';
+    return localStorage.getItem('leesincomic_reader_bg') || '#555555';
   });
   const [showAntiTheftToast, setShowAntiTheftToast] = useState(false);
   const toastTimeoutRef = useRef<any>(null);
@@ -171,7 +171,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           if (data.success && Array.isArray(data.chapter?.images) && data.chapter.images.length > 0) {
             const cleanImgs = data.chapter.images.map(sanitizeImg);
             setChapterImages(cleanImgs);
-            chapter.images = cleanImgs;
             if (onUpdateChapterImages) {
               onUpdateChapterImages(chapter.id, cleanImgs);
             }
@@ -195,6 +194,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   // Sync reader background with body while reading chapter
   useEffect(() => {
+    try {
+      localStorage.setItem('leesincomic_reader_bg', readerBg);
+    } catch (e) {}
     document.body.style.backgroundColor = readerBg;
     return () => {
       document.body.style.backgroundColor = '';
@@ -429,8 +431,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const getAdTracker = () => {
     const now = Date.now();
     const resetIntervalMs = Math.max(1, chapterAdConfig.adResetMinutes || 30) * 60 * 1000;
+    try {
+      const saved = sessionStorage.getItem('leesincomic_ad_tracker');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (now < (parsed.resetAt || 0)) {
+          chapterAdRuntimeTracker = parsed;
+          return chapterAdRuntimeTracker;
+        }
+      }
+    } catch (e) {}
     if (now >= (chapterAdRuntimeTracker.resetAt || 0)) {
       chapterAdRuntimeTracker = { count: 0, lastShownAt: 0, resetAt: now + resetIntervalMs };
+      try { sessionStorage.setItem('leesincomic_ad_tracker', JSON.stringify(chapterAdRuntimeTracker)); } catch (e) {}
     }
     return chapterAdRuntimeTracker;
   };
@@ -439,6 +452,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     const current = getAdTracker();
     current.count += 1;
     current.lastShownAt = Date.now();
+    try { sessionStorage.setItem('leesincomic_ad_tracker', JSON.stringify(current)); } catch (e) {}
   };
 
   // Kích hoạt hẹn giờ hiển thị quảng cáo khi độc giả mở đọc chương
@@ -1033,10 +1047,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             onDeleteComment={onDeleteComment}
             onRequireLogin={onRequireLogin}
             onNavigateToComic={() => onBackToComic()}
-            onNavigateToChapter={() => {}}
+            onNavigateToChapter={(slug, chapNum) => {
+              const chap = comic.chapters?.find((c) => Number(c.chapterNumber) === Number(chapNum));
+              if (chap) onSelectChapter(chap);
+            }}
             title={`Bình Luận ${chapter.title} - ${comic.title}`}
             comicFilter={comic.id}
             chapterFilter={chapter.chapterNumber}
+            currentComic={comic}
+            currentChapter={chapter}
             showComicInfo={false}
             highlightedCommentId={highlightedCommentId}
           />

@@ -89,6 +89,7 @@ import { getGmt7MonthString, getGmt7DateString } from '../utils/viewTracking';
 import { ChapterAdModal } from './ChapterAdModal';
 import { TeamEditComicModal } from './TeamEditComicModal';
 import { updateSeoMeta, generateFullSitemapXml, generateSitemapIndexXml, generateRobotsTxt, downloadClientFile, GENRE_SLUG_MAP } from '../utils/seo';
+import { toSlug } from '../utils/slug';
 
 interface AdminDashboardProps {
   currentUser?: User | null;
@@ -108,7 +109,7 @@ interface AdminDashboardProps {
   mysqlConfig?: MysqlConfig;
   setMysqlConfig?: (config: MysqlConfig) => void;
   siteSettings?: SiteSettings;
-  onUpdateSiteSettings?: (settings: SiteSettings) => void;
+  onUpdateSiteSettings?: (settings: SiteSettings, skipSaveToMysql?: boolean) => void;
   onAddNewComic?: (comic: Comic) => void;
   onUpdateComic?: (updatedComic: Comic) => void;
   onDeleteComic?: (comicId: string) => void;
@@ -384,7 +385,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Site Settings Local Form State
   const [localSiteSettings, setLocalSiteSettings] = useState<SiteSettings>(siteSettings);
   const [siteSavedMsg, setSiteSavedMsg] = useState('');
-  const [cdnSavedMsg, setCdnSavedMsg] = useState('');
   const [isSavingSiteSettings, setIsSavingSiteSettings] = useState(false);
   const [logoPreviewMode, setLogoPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
 
@@ -409,12 +409,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsSavingAdSettings(true);
     setAdSavedSuccessMsg('');
     try {
+      const settingsToSave: SiteSettings = {
+        ...localSiteSettings,
+        chapterAd: localSiteSettings.chapterAd || DEFAULT_CHAPTER_AD,
+      };
       if (onUpdateSiteSettings) {
-        onUpdateSiteSettings(localSiteSettings);
+        onUpdateSiteSettings(settingsToSave, true);
       }
       const activeMysql = localMysqlConfig || mysqlConfig;
       if (activeMysql && activeMysql.enabled) {
-        const res = await saveSiteSettingsToMysql(activeMysql, localSiteSettings);
+        const res = await saveSiteSettingsToMysql(activeMysql, settingsToSave);
         if (res.success) {
           setAdSavedSuccessMsg(res.message || 'Đã lưu và đồng bộ cài đặt quảng cáo lên MySQL thành công!');
         } else {
@@ -581,7 +585,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setSiteSavedMsg('');
     try {
       if (onUpdateSiteSettings) {
-        onUpdateSiteSettings(localSiteSettings);
+        onUpdateSiteSettings(localSiteSettings, true);
       }
 
       // Update browser tab favicon dynamically
@@ -626,7 +630,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const updated = { ...localSiteSettings, ...updates };
     setLocalSiteSettings(updated);
     if (onUpdateSiteSettings) {
-      onUpdateSiteSettings(updated);
+      onUpdateSiteSettings(updated, true);
     }
   };
 
@@ -635,7 +639,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setLogoSizeSavedMsg('');
     try {
       if (onUpdateSiteSettings) {
-        onUpdateSiteSettings(localSiteSettings);
+        onUpdateSiteSettings(localSiteSettings, true);
       }
 
       const activeMysql = localMysqlConfig || mysqlConfig;
@@ -694,7 +698,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newComicBanner, setNewComicBanner] = useState('');
   const [newComicSummary, setNewComicSummary] = useState('');
   const [newComicTeamId, setNewComicTeamId] = useState(teams[0]?.id || '');
+  const [newComicIs18Plus, setNewComicIs18Plus] = useState(false);
   const [comicCreatedMsg, setComicCreatedMsg] = useState('');
+  const [isCreatingComic, setIsCreatingComic] = useState(false);
   const [teamReassignedMsg, setTeamReassignedMsg] = useState('');
   const [pendingTeamChanges, setPendingTeamChanges] = useState<Record<string, string>>({});
   const [comicDeleteConfirmId, setComicDeleteConfirmId] = useState<string | null>(null);
@@ -1295,52 +1301,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleCreateComicSubmit = (e: React.FormEvent) => {
+  const handleCreateComicSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComicTitle.trim()) return;
+    if (!newComicTitle.trim() || isCreatingComic) return;
 
-    const assignedTeam = teams.find(t => t.id === newComicTeamId) || teams[0];
-    const generatedSlug = newComicSlug.trim() || newComicTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    setIsCreatingComic(true);
+    try {
+      const assignedTeam = (teams && teams.find((t) => t.id === newComicTeamId)) || teams?.[0] || { id: 'team-leesin', name: 'Leesin Scans' };
+      const generatedSlug = toSlug(newComicSlug.trim() || newComicTitle.trim()) || `comic-${Date.now()}`;
 
-    const newComic: Comic = {
-      id: `comic-${Date.now()}`,
-      title: newComicTitle.trim(),
-      slug: generatedSlug,
-      otherNames: [],
-      coverImage: newComicCover.trim() || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
-      bannerImage: newComicBanner.trim() || newComicCover.trim(),
-      authors: [newComicAuthor.trim() || 'Tác giả'],
-      status: 'Đang tiến hành',
-      genres: newComicGenres.split(',').map(g => g.trim()).filter(Boolean),
-      summary: newComicSummary.trim() || `Truyện tranh ${newComicTitle} được dịch và cập nhật bởi nhóm ${assignedTeam.name}.`,
-      teamId: assignedTeam.id,
-      teamName: assignedTeam.name,
-      views: 0,
-      likes: 0,
-      follows: 0,
-      rating: 5.0,
-      ratingCount: 1,
-      updatedAt: new Date().toISOString(),
-      chapters: [],
-      seo: {
-        focusKeyword: newComicTitle,
-        metaTitle: `${newComicTitle} Tiếng Việt Mới Nhất - Leesin Comic`,
-        metaDesc: `Đọc truyện ${newComicTitle} full tiếng việt, load ảnh siêu nhanh từ CDN tachserver.site.`,
-        canonicalUrl: `https://leesincomic.com/truyen/${generatedSlug}`,
-        score: 95,
-        schemaType: 'ComicBook',
-        ogImage: newComicCover.trim(),
+      const newComic: Comic = {
+        id: `comic-${Date.now()}`,
+        title: newComicTitle.trim(),
+        slug: generatedSlug,
+        otherNames: [],
+        coverImage: newComicCover.trim() || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
+        bannerImage: newComicBanner.trim() || newComicCover.trim(),
+        authors: [newComicAuthor.trim() || 'Tác giả'],
+        status: 'Đang tiến hành',
+        genres: newComicGenres.split(',').map((g) => g.trim()).filter(Boolean),
+        is18Plus: newComicIs18Plus,
+        summary: newComicSummary.trim() || `Truyện tranh ${newComicTitle} được dịch và cập nhật bởi nhóm ${assignedTeam.name}.`,
+        teamId: assignedTeam.id,
+        teamName: assignedTeam.name,
+        views: 0,
+        likes: 0,
+        follows: 0,
+        rating: 5.0,
+        ratingCount: 1,
+        updatedAt: new Date().toISOString(),
+        chapters: [],
+        seo: {
+          focusKeyword: newComicTitle,
+          metaTitle: `${newComicTitle} Tiếng Việt Mới Nhất - Leesin Comic`,
+          metaDesc: `Đọc truyện ${newComicTitle} full tiếng việt, load ảnh siêu nhanh từ CDN tachserver.site.`,
+          canonicalUrl: `https://leesincomic.com/truyen/${generatedSlug}`,
+          score: 95,
+          schemaType: 'ComicBook',
+          ogImage: newComicCover.trim(),
+        },
+      };
+
+      if (onAddNewComic) {
+        await onAddNewComic(newComic);
       }
-    };
-
-    if (onAddNewComic) {
-      onAddNewComic(newComic);
+      setComicCreatedMsg(`Đã tạo bộ truyện "${newComic.title}" thành công! Nhóm ${assignedTeam.name} có thể bắt đầu đăng chương ngay.`);
+      setNewComicTitle('');
+      setNewComicSlug('');
+      setNewComicSummary('');
+      setNewComicBanner('');
+      setNewComicCover('https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80');
+      setNewComicAuthor('Đang cập nhật');
+      setNewComicIs18Plus(false);
+      setTimeout(() => setComicCreatedMsg(''), 5000);
+    } catch (err: any) {
+      alert(`Lỗi khi tạo truyện: ${err?.message || 'Không thể tạo truyện'}`);
+    } finally {
+      setIsCreatingComic(false);
     }
-    setComicCreatedMsg(`Đã tạo bộ truyện "${newComic.title}" thành công! Nhóm ${assignedTeam.name} có thể bắt đầu đăng chương ngay.`);
-    setNewComicTitle('');
-    setNewComicSlug('');
-    setNewComicSummary('');
-    setTimeout(() => setComicCreatedMsg(''), 5000);
   };
 
   // Synchronize team views with official numbers and active comics
@@ -4522,38 +4540,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     />
                   </label>
                 </div>
-
-                {cdnSavedMsg && (
-                  <div className="p-3 bg-emerald-500/15 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>{cdnSavedMsg}</span>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  disabled={isSavingSiteSettings}
-                  onClick={async () => {
-                    setIsSavingSiteSettings(true);
-                    const updated = {
-                      ...localSiteSettings,
-                      imageServerConfig,
-                    };
-                    setLocalSiteSettings(updated);
-                    if (onUpdateSiteSettings) onUpdateSiteSettings(updated);
-                    const activeMysql = localMysqlConfig || mysqlConfig;
-                    if (activeMysql && activeMysql.enabled) {
-                      await saveSiteSettingsToMysql(activeMysql, updated);
-                    }
-                    setIsSavingSiteSettings(false);
-                    setCdnSavedMsg('Đã lưu cấu hình CDN server thành công vào MySQL Database!');
-                    setTimeout(() => setCdnSavedMsg(''), 5000);
-                  }}
-                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>{isSavingSiteSettings ? 'Đang lưu lên MySQL...' : 'Lưu & Đồng Bộ Cấu Hình CDN Lên MySQL'}</span>
-                </button>
               </div>
 
               {/* Deployment Checklist for aaPanel */}
@@ -4667,7 +4653,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="text"
                     required
                     value={newComicTitle}
-                    onChange={(e) => setNewComicTitle(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNewComicTitle(val);
+                      if (!newComicSlug || newComicSlug === toSlug(newComicTitle)) {
+                        setNewComicSlug(toSlug(val));
+                      }
+                    }}
                     placeholder="Ví dụ: Đại Quản Gia Là Ma Hoàng"
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-medium"
                   />
@@ -4680,7 +4672,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <input
                     type="text"
                     value={newComicSlug}
-                    onChange={(e) => setNewComicSlug(e.target.value)}
+                    onChange={(e) => setNewComicSlug(toSlug(e.target.value))}
                     placeholder="Tự động tạo: dai-quan-gia-la-ma-hoang"
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
                   />
@@ -4773,13 +4765,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 />
               </div>
 
+              {/* Tùy chọn gắn nhãn 18+ */}
+              <div className="p-3 bg-slate-900/60 rounded-2xl border border-slate-800">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newComicIs18Plus}
+                    onChange={(e) => setNewComicIs18Plus(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-rose-500 cursor-pointer"
+                  />
+                  <span className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                    <span className="text-rose-400 font-bold text-xs flex items-center gap-1">
+                      <span>🔞</span> Gắn Nhãn 18+
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-normal">
+                      (Khi bật, website sẽ tự động che mờ ảnh bìa và hiển thị nút xác nhận xem)
+                    </span>
+                  </span>
+                </label>
+              </div>
+
               <div className="flex justify-end pt-2">
                 <button
                   type="submit"
-                  className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-transform active:scale-95"
+                  disabled={isCreatingComic}
+                  className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-black rounded-xl shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-transform active:scale-95"
                 >
                   <PlusCircle className="w-4 h-4" />
-                  <span>Tạo & Xuất Bản Bộ Truyện</span>
+                  <span>{isCreatingComic ? 'Đang Tạo Truyện...' : 'Tạo & Xuất Bản Bộ Truyện'}</span>
                 </button>
               </div>
             </form>
@@ -5379,30 +5392,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           {/* Action buttons */}
           <div className="flex flex-wrap items-center gap-3 pt-2">
-            <button
-              type="button"
-              disabled={isSavingSiteSettings}
-              onClick={async () => {
-                setIsSavingSiteSettings(true);
-                const updated = {
-                  ...localSiteSettings,
-                  mysqlConfig: localMysqlConfig,
-                };
-                setLocalSiteSettings(updated);
-                if (onUpdateSiteSettings) onUpdateSiteSettings(updated);
-                if (setMysqlConfig) setMysqlConfig(localMysqlConfig);
-                if (localMysqlConfig.enabled) {
-                  await saveSiteSettingsToMysql(localMysqlConfig, updated);
-                }
-                setIsSavingSiteSettings(false);
-                alert('Đã lưu và đồng bộ cấu hình MySQL lên hệ thống!');
-              }}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-sky-500/20 transition-all active:scale-95 disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              <span>{isSavingSiteSettings ? 'Đang lưu...' : 'Lưu Cấu Hình MySQL Lên Hệ Thống'}</span>
-            </button>
-
             <button
               type="button"
               disabled={isTestingMysql}
@@ -6486,6 +6475,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   )}
                 </button>
               </div>
+
+              {siteSavedMsg && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{siteSavedMsg}</span>
+                </div>
+              )}
             </div>
 
             {/* Section 2: Views Calculation Rules */}
@@ -6504,12 +6500,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="number"
                     min={0}
                     max={300}
-                    value={localSiteSettings.viewDelaySeconds}
+                    value={localSiteSettings.viewDelaySeconds ?? 5}
                     onChange={(e) => setLocalSiteSettings({ ...localSiteSettings, viewDelaySeconds: Number(e.target.value) || 0 })}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-amber-400 font-extrabold focus:outline-none focus:border-amber-500"
                   />
                   <p className="text-[10px] text-slate-400 leading-tight">
-                    Người dùng phải ở trong trang đọc ít nhất <strong className="text-amber-300">{localSiteSettings.viewDelaySeconds}s</strong> mới được tính 1 lượt xem.
+                    Người dùng phải ở trong trang đọc ít nhất <strong className="text-amber-300">{localSiteSettings.viewDelaySeconds ?? 5}s</strong> mới được tính 1 lượt xem.
                   </p>
                 </div>
 
@@ -6521,12 +6517,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="number"
                     min={0}
                     max={1440}
-                    value={localSiteSettings.viewCooldownMinutes}
+                    value={localSiteSettings.viewCooldownMinutes ?? 15}
                     onChange={(e) => setLocalSiteSettings({ ...localSiteSettings, viewCooldownMinutes: Number(e.target.value) || 0 })}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-sky-400 font-extrabold focus:outline-none focus:border-amber-500"
                   />
                   <p className="text-[10px] text-slate-400 leading-tight">
-                    Thời gian giãn cách chống spam view cho cùng 1 chương (<strong className="text-sky-300">{localSiteSettings.viewCooldownMinutes}m</strong>).
+                    Thời gian giãn cách chống spam view cho cùng 1 chương (<strong className="text-sky-300">{localSiteSettings.viewCooldownMinutes ?? 15}m</strong>).
                   </p>
                 </div>
 
@@ -6538,12 +6534,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="number"
                     min={1}
                     max={100}
-                    value={localSiteSettings.viewMultiplier}
+                    value={localSiteSettings.viewMultiplier ?? 1}
                     onChange={(e) => setLocalSiteSettings({ ...localSiteSettings, viewMultiplier: Number(e.target.value) || 1 })}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-emerald-400 font-extrabold focus:outline-none focus:border-amber-500"
                   />
                   <p className="text-[10px] text-slate-400 leading-tight">
-                    Mỗi lượt đọc sẽ cộng <strong className="text-emerald-300">+{localSiteSettings.viewMultiplier} view</strong> vào hệ thống.
+                    Mỗi lượt đọc sẽ cộng <strong className="text-emerald-300">+{localSiteSettings.viewMultiplier ?? 1} view</strong> vào hệ thống.
                   </p>
                 </div>
 
@@ -6555,12 +6551,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="number"
                     min={0}
                     max={100}
-                    value={localSiteSettings.requireScrollPercent}
+                    value={localSiteSettings.requireScrollPercent ?? 0}
                     onChange={(e) => setLocalSiteSettings({ ...localSiteSettings, requireScrollPercent: Number(e.target.value) || 0 })}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-purple-400 font-extrabold focus:outline-none focus:border-amber-500"
                   />
                   <p className="text-[10px] text-slate-400 leading-tight">
-                    Cần cuộn ít nhất <strong className="text-purple-300">{localSiteSettings.requireScrollPercent}%</strong> nội dung để kích hoạt.
+                    Cần cuộn ít nhất <strong className="text-purple-300">{localSiteSettings.requireScrollPercent ?? 0}%</strong> nội dung để kích hoạt.
                   </p>
                 </div>
               </div>
@@ -6573,7 +6569,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <span className="text-emerald-400 font-bold">Cơ Chế Tính Lượt Xem Hợp Lệ &amp; Đồng Bộ 100%:</span>
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Lượt xem chỉ đếm khi độc giả đọc đủ <strong className="text-amber-300">{localSiteSettings.viewDelaySeconds}s</strong> và cuộn <strong className="text-purple-300">{localSiteSettings.requireScrollPercent}%</strong>. Hệ thống áp dụng thời gian chờ chống spam <strong className="text-sky-300">{localSiteSettings.viewCooldownMinutes} phút</strong> giữa 2 lần xem và cộng <strong className="text-emerald-300">+{localSiteSettings.viewMultiplier} view</strong>. <strong className="text-slate-200">Toàn bộ view cũ được giữ nguyên vẹn 100%</strong>, lượt xem mới phát sinh sẽ lập tức cập nhật đồng bộ cho cả trang truyện lẫn tài khoản nhóm dịch.
+                    Lượt xem chỉ đếm khi độc giả đọc đủ <strong className="text-amber-300">{localSiteSettings.viewDelaySeconds ?? 5}s</strong> và cuộn <strong className="text-purple-300">{localSiteSettings.requireScrollPercent ?? 0}%</strong>. Hệ thống áp dụng thời gian chờ chống spam <strong className="text-sky-300">{localSiteSettings.viewCooldownMinutes ?? 15} phút</strong> giữa 2 lần xem và cộng <strong className="text-emerald-300">+{localSiteSettings.viewMultiplier ?? 1} view</strong>. <strong className="text-slate-200">Toàn bộ view cũ được giữ nguyên vẹn 100%</strong>, lượt xem mới phát sinh sẽ lập tức cập nhật đồng bộ cho cả trang truyện lẫn tài khoản nhóm dịch.
                   </p>
                 </div>
                 <button
@@ -6595,6 +6591,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   )}
                 </button>
               </div>
+
+              {siteSavedMsg && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{siteSavedMsg}</span>
+                </div>
+              )}
             </div>
 
             {/* Section 3: Homepage Announcement Banner Configuration */}
@@ -6686,7 +6689,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div>
                   <h5 className="text-xs font-bold text-slate-100">Bật / Tắt Khung Bình Luận Mới Nhất Trên Trang Chủ:</h5>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Cho phép hiển thị hoặc ẩn hoàn toàn widget "Bình Luận Mới Nhất Các Chap" ở cột phải trang chủ.
+                    Cho phép hiển thị hoặc ẩn hoàn toàn widget "Bình Luận Mới Nhất" ở cột phải trang chủ.
                   </p>
                 </div>
 
@@ -8397,7 +8400,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       max="20"
                       value={adConfig.maxAdsCount ?? 2}
                       onChange={(e) =>
-                        updateAdConfig({ maxAdsCount: Math.max(1, parseInt(e.target.value) || 1) })
+                        updateAdConfig({ maxAdsCount: e.target.value === '' ? ('' as any) : Number(e.target.value) })
+                      }
+                      onBlur={() =>
+                        updateAdConfig({ maxAdsCount: Math.max(1, parseInt(String(adConfig.maxAdsCount)) || 1) })
                       }
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-bold focus:outline-none focus:border-emerald-500"
                     />
@@ -8423,7 +8429,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       value={adConfig.firstAdDelaySeconds ?? 5}
                       onChange={(e) =>
                         updateAdConfig({
-                          firstAdDelaySeconds: Math.max(1, parseInt(e.target.value) || 1),
+                          firstAdDelaySeconds: e.target.value === '' ? ('' as any) : Number(e.target.value),
+                        })
+                      }
+                      onBlur={() =>
+                        updateAdConfig({
+                          firstAdDelaySeconds: Math.max(1, parseInt(String(adConfig.firstAdDelaySeconds)) || 1),
                         })
                       }
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-bold focus:outline-none focus:border-emerald-500"
@@ -8450,7 +8461,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       value={adConfig.secondAdDelaySeconds ?? 60}
                       onChange={(e) =>
                         updateAdConfig({
-                          secondAdDelaySeconds: Math.max(5, parseInt(e.target.value) || 5),
+                          secondAdDelaySeconds: e.target.value === '' ? ('' as any) : Number(e.target.value),
+                        })
+                      }
+                      onBlur={() =>
+                        updateAdConfig({
+                          secondAdDelaySeconds: Math.max(5, parseInt(String(adConfig.secondAdDelaySeconds)) || 5),
                         })
                       }
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-bold focus:outline-none focus:border-emerald-500"
@@ -8477,7 +8493,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       value={adConfig.adResetMinutes ?? 30}
                       onChange={(e) =>
                         updateAdConfig({
-                          adResetMinutes: Math.max(1, parseInt(e.target.value) || 1),
+                          adResetMinutes: e.target.value === '' ? ('' as any) : Number(e.target.value),
+                        })
+                      }
+                      onBlur={() =>
+                        updateAdConfig({
+                          adResetMinutes: Math.max(1, parseInt(String(adConfig.adResetMinutes)) || 1),
                         })
                       }
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-bold focus:outline-none focus:border-emerald-500"

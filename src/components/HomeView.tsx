@@ -21,7 +21,7 @@ import {
   Grid,
   Trophy
 } from 'lucide-react';
-import { Comic, User, ChapterComment, SiteSettings, ScanTeam } from '../types';
+import { Comic, User, ChapterComment, SiteSettings, ScanTeam, Chapter } from '../types';
 import { LiveCommentsFeed } from './LiveCommentsFeed';
 import { TopFeaturedSlider } from './TopFeaturedSlider';
 import { CensoredCoverImage } from './CensoredCoverImage';
@@ -49,9 +49,26 @@ interface HomeViewProps {
   onSelectGenre?: (genre: string) => void;
   selectedRankingTab?: 'day' | 'week' | 'month';
   onSelectRankingTab?: (tab: 'day' | 'week' | 'month') => void;
+  isLoading?: boolean;
 }
 
 const COMICS_PER_PAGE = 24;
+
+// Helper format tiêu đề hiển thị cho chương trong Chapters List preview
+const formatChapterPreviewTitle = (chap: Chapter | null | undefined): string => {
+  if (!chap) return '';
+  const rawTitle = (chap.title || '').trim();
+  const num = chap.chapterNumber !== undefined && chap.chapterNumber !== null ? chap.chapterNumber : '';
+  // Nếu trong tiêu đề đã có chữ Chương hoặc Chap ở đầu (không phân biệt hoa/thường)
+  if (/^(chương|chuong|chap)(\s|\d|:|$)/i.test(rawTitle)) {
+    return rawTitle;
+  }
+  // Nếu không có chữ Chương hay Chap ở đầu thì tự động thêm chữ Chương {chapterNumber}: vào trước
+  if (rawTitle && rawTitle !== String(num)) {
+    return num !== '' ? `Chương ${num}: ${rawTitle}` : rawTitle;
+  }
+  return num !== '' ? `Chương ${num}` : rawTitle;
+};
 
 // Memoized Comic Card Component for zero-lag rendering
 const ComicCardItem = React.memo<{
@@ -92,6 +109,7 @@ const ComicCardItem = React.memo<{
           alt={comic.title}
           comicId={comic.id}
           genres={comic.genres}
+          is18Plus={comic.is18Plus}
           className="w-full h-full"
           imageClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           loading="lazy"
@@ -112,7 +130,7 @@ const ComicCardItem = React.memo<{
 
         {/* Badges top left */}
         <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
-          {is18PlusComic(comic.genres) && (
+          {is18PlusComic(comic) && (
             <div className="px-1.5 py-0.5 rounded bg-gradient-to-r from-red-600 to-rose-700 text-white font-black text-[9px] shadow-lg shadow-red-600/40 flex items-center gap-0.5 border border-red-400/30">
               <span>🔞</span>
               <span>18+</span>
@@ -192,7 +210,7 @@ const ComicCardItem = React.memo<{
             <>
               <div className="flex items-center justify-between text-[11px]">
                 <span className="font-semibold text-amber-400 truncate">
-                  Chap {latestChap.chapterNumber}
+                  {formatChapterPreviewTitle(latestChap)}
                   {latestChap.isPasswordProtected && ' 🔒'}
                   {latestChap.scheduledDate && ' ⏳'}
                 </span>
@@ -202,7 +220,7 @@ const ComicCardItem = React.memo<{
               </div>
               {prevChap && (
                 <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span className="truncate">Chap {prevChap.chapterNumber}</span>
+                  <span className="truncate">{formatChapterPreviewTitle(prevChap)}</span>
                   <span className="text-[10px] text-slate-400 shrink-0">
                     {formatRelativeTime(prevChap.updatedAt || prevChap.createdAt)}
                   </span>
@@ -242,6 +260,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onSelectGenre,
   selectedRankingTab: propRankingTab,
   onSelectRankingTab,
+  isLoading = false,
 }) => {
   const [internalGenre, setInternalGenre] = useState<string>('Tất cả');
   const [internalRankingTab, setInternalRankingTab] = useState<'day' | 'week' | 'month'>('month');
@@ -445,7 +464,19 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
 
           {/* Comic Cards Grid */}
-          {filteredComics.length === 0 ? (
+          {isLoading && filteredComics.length === 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {Array.from({ length: 8 }).map((_, idx) => (
+                <div key={idx} className="bg-[#141822] rounded-xl overflow-hidden border border-slate-800/80 animate-pulse flex flex-col">
+                  <div className="aspect-[3/4] bg-slate-800/50" />
+                  <div className="p-2.5 space-y-2">
+                    <div className="h-3.5 bg-slate-800/80 rounded w-3/4" />
+                    <div className="h-3 bg-slate-800/50 rounded w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredComics.length === 0 ? (
             <div className="text-center py-16 px-4 bg-[#141822] rounded-2xl border border-dashed border-slate-800">
               <BookOpen className="w-10 h-10 mx-auto text-slate-600 mb-2" />
               <p className="text-slate-300 font-semibold text-sm">Chưa có truyện nào</p>
@@ -562,7 +593,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-5 h-5 text-amber-400" />
-                <h3 className="font-bold text-white text-sm">Bảng Xếp Hạng Top Đọc</h3>
+                <h3 className="font-bold text-white text-sm">Bảng Xếp Hạng</h3>
               </div>
 
               {/* Filter Day / Week / Month */}
@@ -623,6 +654,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     alt={comic.title}
                     comicId={comic.id}
                     genres={comic.genres}
+                    is18Plus={comic.is18Plus}
                     size="xs"
                     showBadge={false}
                     className="w-11 h-14 rounded-md shadow shrink-0"
@@ -715,7 +747,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               onNavigateToChapter={(slug, num) => {
                 if (onNavigateToChapter) onNavigateToChapter(slug, num);
               }}
-              title="Bình Luận Mới Nhất Các Chap"
+              title="Bình Luận Mới Nhất"
               showComicInfo={true}
             />
           )}

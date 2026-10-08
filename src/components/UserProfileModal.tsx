@@ -70,8 +70,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      setErrorMsg('Ảnh không được vượt quá 5MB!');
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMsg('Ảnh không được vượt quá 10MB!');
       return;
     }
 
@@ -79,11 +79,46 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setErrorMsg('');
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const result = ev.target?.result as string;
-      if (result) {
-        setAvatar(result);
+      const rawData = ev.target?.result as string;
+      if (!rawData) {
+        setIsUploading(false);
+        return;
       }
-      setIsUploading(false);
+      // Nén và chuẩn hóa avatar về kích thước chuẩn nét tối ưu (240x240) để lưu trữ nhanh, đồng bộ tức thời mọi thiết bị
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 240;
+        let w = img.naturalWidth || img.width;
+        let h = img.naturalHeight || img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, w, h);
+          const optimized = canvas.toDataURL('image/jpeg', 0.82);
+          setAvatar(optimized);
+        } else {
+          setAvatar(rawData);
+        }
+        setIsUploading(false);
+      };
+      img.onerror = () => {
+        setAvatar(rawData);
+        setIsUploading(false);
+      };
+      img.src = rawData;
     };
     reader.onerror = () => {
       setErrorMsg('Có lỗi khi đọc file ảnh!');
@@ -119,9 +154,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       }
     }
 
+    // Tự động nhận diện customAvatarUrl nếu người dùng vừa dán link mà chưa kịp ấn Áp dụng
+    const finalAvatar = (customAvatarUrl.trim() || avatar || '').trim();
+
     onUpdateProfile({
       name: name.trim(),
-      avatar: avatar.trim(),
+      avatar: finalAvatar || currentUser.avatar,
       password: newPassword.trim() ? newPassword.trim() : undefined,
       teamName: (currentUser.role === 'TEAM_LEADER' || currentUser.role === 'ADMIN') ? (teamName.trim() || undefined) : undefined,
     });
@@ -140,7 +178,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     >
       <div
         id="user-profile-modal-content"
-        className="w-full max-w-lg bg-[#141822] border border-slate-700/80 rounded-3xl shadow-2xl overflow-hidden p-6 sm:p-7 relative animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-2xl bg-[#141822] border border-slate-700/80 rounded-3xl shadow-2xl overflow-hidden p-2 sm:p-3 relative animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -277,35 +315,36 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           {/* Section 2: Display Name & Email */}
           <div className="p-4 bg-slate-900/60 rounded-2xl border border-slate-800 space-y-3.5">
-            <div>
-              <label className="block text-xs font-bold text-slate-200 mb-1.5">
-                Tên Hiển Thị Của Bạn: *
-              </label>
-              <div className="relative">
-                <UserIcon className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Nhập tên hiển thị..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                  required
-                />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-1.5">
+                  Tên Tài khoản:
+                </label>
+                <div className="relative">
+                  <UserIcon className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={currentUser.username ? `${currentUser.username}` : (currentUser.email || currentUser.name)}
+                    disabled
+                    className="w-full bg-slate-950/60 border border-slate-800/80 rounded-xl pl-10 pr-4 py-2 text-sm text-amber-300 font-mono cursor-not-allowed"
+                  />
+                </div>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                Tên Đăng Nhập (Username / Tài khoản):
-              </label>
-              <div className="relative">
-                <UserIcon className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={currentUser.username ? `@${currentUser.username}` : (currentUser.email || currentUser.name)}
-                  disabled
-                  className="w-full bg-slate-950/60 border border-slate-800/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-amber-300 font-mono cursor-not-allowed"
-                />
+              <div>
+                <label className="block text-xs font-bold text-slate-200 mb-1.5">
+                  Tên Hiển Thị: *
+                </label>
+                <div className="relative">
+                  <UserIcon className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Nhập tên hiển thị..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                    required
+                  />
+                </div>
               </div>
             </div>
 

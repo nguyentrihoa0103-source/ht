@@ -69,6 +69,7 @@ export interface Chapter {
   teamId: string;
   teamName: string;
   link?: string;
+  pageCount?: number;
 }
 
 export interface SeoConfig {
@@ -117,6 +118,7 @@ export interface Comic {
   uploaderId?: string;
   isHot?: boolean;
   isTrending?: boolean;
+  is18Plus?: boolean;
   isRecommended?: boolean;
   isNewRelease?: boolean;
   chapters: Chapter[];
@@ -297,10 +299,6 @@ export interface SiteSettings {
     position?: 'bottom-right' | 'bottom-left' | 'bottom-center' | 'top-right' | 'top-left' | 'center' | 'tiled' | 'diagonal';
     mode?: 'text' | 'logo' | 'both';
   };
-  // CDN & Storage Configurations (Persisted to SQL Database for Cross-Platform Synchronization)
-  imageServerConfig?: ImageServerConfig;
-  mysqlConfig?: Partial<MysqlConfig>;
-  readerBg?: string;
   // Footer Customization
   footerDescription?: string;
   footerSecurityText?: string;

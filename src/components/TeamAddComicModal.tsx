@@ -23,6 +23,7 @@ export const TeamAddComicModal: React.FC<TeamAddComicModalProps> = ({
   const [slug, setSlug] = useState('');
   const [author, setAuthor] = useState('');
   const [genres, setGenres] = useState('Manhwa, Action, Chuyển Sinh');
+  const [is18Plus, setIs18Plus] = useState(false);
   const [coverImage, setCoverImage] = useState(
     'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80'
   );
@@ -41,6 +42,14 @@ export const TeamAddComicModal: React.FC<TeamAddComicModalProps> = ({
     const generatedSlug = slug.trim() ? toSlug(slug.trim()) : toSlug(title.trim());
     const finalSlug = generatedSlug || `comic-${Date.now()}`;
 
+    const parsedGenres = genres
+      .split(',')
+      .map((g) => g.trim())
+      .filter(Boolean);
+    const finalGenres = is18Plus
+      ? (parsedGenres.some((g) => g.toLowerCase() === '18+') ? parsedGenres : [...parsedGenres, '18+'])
+      : parsedGenres.filter((g) => g.toLowerCase() !== '18+');
+
     const newComic: Comic = {
       id: `comic-${Date.now()}`,
       title: title.trim(),
@@ -52,10 +61,8 @@ export const TeamAddComicModal: React.FC<TeamAddComicModalProps> = ({
       bannerImage: bannerImage.trim() || coverImage.trim(),
       authors: [author.trim() || 'Đang cập nhật'],
       status: 'Đang tiến hành',
-      genres: genres
-        .split(',')
-        .map((g) => g.trim())
-        .filter(Boolean),
+      genres: finalGenres,
+      is18Plus: is18Plus,
       summary:
         summary.trim() ||
         `Truyện tranh ${title} được dịch và đăng tải độc quyền bởi nhóm ${team.name}.`,
@@ -229,6 +236,26 @@ export const TeamAddComicModal: React.FC<TeamAddComicModalProps> = ({
               placeholder="Nhập tóm tắt cốt truyện mở đầu..."
               className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 resize-none font-medium"
             />
+          </div>
+
+          {/* Tùy chọn gắn nhãn 18+ */}
+          <div className="p-3 bg-slate-900/60 rounded-2xl border border-slate-800">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={is18Plus}
+                onChange={(e) => setIs18Plus(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-rose-500 cursor-pointer"
+              />
+              <span className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                <span className="text-rose-400 font-bold text-xs flex items-center gap-1">
+                  <span>🔞</span> Gắn Nhãn 18+
+                </span>
+                <span className="text-[11px] text-slate-400 font-normal">
+                  (Khi bật, website sẽ tự động che mờ ảnh bìa và hiển thị nút xác nhận xem)
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

@@ -1,8 +1,136 @@
 <!doctype html>
 <html lang="vi">
   <head>
+                       <!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-JN14HP7QQ6"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-JN14HP7QQ6');
+</script>
+<meta name="google-site-verification" content="ca-mTNfHGXStaDJGt0Ja59pK7MgPI3JxeuT4JEgBa2I" />
+<script>
+(function () {
+
+    var shopeeLink = "https://s.shopee.vn/2VrbdMvdjP";
+
+    var delayTime = 5000;              // Chờ 5 giây
+    var resetTime = 2 * 60 * 1000;     // 2 phút
+
+    var cycleKey = "affiliate_cycle_start";
+    var shopeeKey = "shopee_opened";
+
+    // =========================
+    // KIỂM TRA TRẠNG THÁI
+    // =========================
+
+    var now = Date.now();
+    var cycleStart = parseInt(localStorage.getItem(cycleKey) || "0");
+    var shopeeOpened = localStorage.getItem(shopeeKey);
+
+    // Nếu chưa có chu kỳ hoặc đã quá 2 phút
+    if (!cycleStart || (now - cycleStart >= resetTime)) {
+
+        cycleStart = now;
+
+        localStorage.setItem(cycleKey, cycleStart);
+        localStorage.removeItem(shopeeKey);
+
+        shopeeOpened = null;
+    }
+
+    // =========================
+    // MỞ SHOPEE
+    // =========================
+
+    function openShopee() {
+
+        var now = Date.now();
+        var cycleStart = parseInt(localStorage.getItem(cycleKey) || "0");
+        var shopeeOpened = localStorage.getItem(shopeeKey);
+
+        // Nếu đã mở trong chu kỳ 2 phút thì KHÔNG mở nữa
+        if (shopeeOpened === "1") {
+            return;
+        }
+
+        // Nếu chưa có cycle thì tạo
+        if (!cycleStart) {
+            cycleStart = now;
+            localStorage.setItem(cycleKey, cycleStart);
+        }
+
+        // Nếu chưa hết 2 phút
+        if ((now - cycleStart) < resetTime) {
+
+            // Đánh dấu NGAY LẬP TỨC
+            localStorage.setItem(shopeeKey, "1");
+
+            // Chỉ mở 1 lần
+            setTimeout(function () {
+
+                // Kiểm tra lại tránh trường hợp đã có tab khác mở
+                if (localStorage.getItem(shopeeKey) !== "1") {
+                    return;
+                }
+
+                var a = document.createElement("a");
+
+                a.href = shopeeLink;
+                a.target = "_blank";
+                a.rel = "noopener noreferrer";
+
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+
+            }, delayTime);
+        }
+    }
+
+    // =========================
+    // LOAD TRANG
+    // =========================
+
+    window.addEventListener("load", function () {
+        openShopee();
+    });
+
+    // =========================
+    // CLICK
+    // =========================
+
+    document.addEventListener("click", function () {
+        openShopee();
+    });
+
+    // =========================
+    // RESET SAU 2 PHÚT
+    // =========================
+
+    setInterval(function () {
+
+        var now = Date.now();
+        var cycleStart = parseInt(localStorage.getItem(cycleKey) || "0");
+
+        if (cycleStart && (now - cycleStart >= resetTime)) {
+
+            localStorage.removeItem(shopeeKey);
+            localStorage.setItem(cycleKey, now);
+
+        }
+
+    }, 1000);
+
+})();
+</script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <meta name="referrer" content="no-referrer" />
     <title>Leesin Comic - Kho Truyện Tranh Online (leesincomic.com)</title>
     <meta name="description" content="Website đọc truyện tranh Leesin Comic (leesincomic.com) tích hợp MySQL database, hệ thống thông báo realtime khi có bình luận/trả lời bình luận cho độc giả và nhóm dịch, phân quyền nhóm dịch đăng và quản lý truyện/chương, quản trị view admin 5 tháng, upload zip tự nén & đóng dấu watermark, CDN tachserver.site." />

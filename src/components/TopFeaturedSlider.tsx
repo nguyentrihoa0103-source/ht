@@ -62,7 +62,7 @@ export const TopFeaturedSlider: React.FC<TopFeaturedSliderProps> = ({
   const touchEndX = useRef<number | null>(null);
 
   const activeComic = top5Comics[currentIndex] || comics[0];
-  const is18 = activeComic ? is18PlusComic(activeComic.genres) : false;
+  const is18 = activeComic ? is18PlusComic(activeComic) : false;
   const [isAdultRevealed, setIsAdultRevealed] = useState<boolean>(() => {
     if (!activeComic || !is18) return true;
     return isComicCoverRevealed(activeComic.id);
@@ -206,6 +206,8 @@ export const TopFeaturedSlider: React.FC<TopFeaturedSliderProps> = ({
             alt={activeComic.title}
             comicId={activeComic.id}
             genres={activeComic.genres}
+            is18Plus={activeComic.is18Plus}
+            is18PlusOverride={is18}
             size="lg"
             showBadge={false}
             className="w-full h-full"
@@ -420,6 +422,7 @@ export const TopFeaturedSlider: React.FC<TopFeaturedSliderProps> = ({
                       alt={comic.title}
                       comicId={comic.id}
                       genres={comic.genres}
+                      is18Plus={comic.is18Plus}
                       size="xs"
                       showBadge={false}
                       className="w-full h-full"

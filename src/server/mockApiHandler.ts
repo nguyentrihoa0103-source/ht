@@ -1,14 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import type { IncomingMessage, ServerResponse } from 'http';
-import { INITIAL_COMICS, INITIAL_TEAMS, INITIAL_USERS, INITIAL_COMMENTS, INITIAL_READING_HISTORY, INITIAL_FOLLOWED_COMICS, INITIAL_FOLLOWED_TEAMS } from '../data/initialData';
+import { INITIAL_TEAMS, INITIAL_USERS, INITIAL_COMMENTS, INITIAL_READING_HISTORY, INITIAL_FOLLOWED_COMICS, INITIAL_NOTIFICATIONS, INITIAL_FOLLOWED_TEAMS } from '../data/initialData';
+import { INITIAL_COMICS } from '../data/initialComicsData';
 import { DEFAULT_SITE_SETTINGS } from '../types';
 import { getComicLatestTimestamp } from '../utils/timeAgo';
 
 const DB_FILE = path.resolve(process.cwd(), 'data_store.json');
 const DB_BAK_FILE = path.resolve(process.cwd(), 'data_store.json.bak');
-const PUBLIC_DB_FILE = path.resolve(process.cwd(), 'public', 'data_store.json');
-const ALT_SRC_FILE = path.resolve(process.cwd(), 'src', 'data', 'initialDataStore.json');
 
 interface DatabaseStore {
   comics: any[];
@@ -36,7 +35,7 @@ function tryParseFile(filePath: string): any | null {
 }
 
 function loadDatabase(): DatabaseStore {
-  const candidatePaths = [DB_FILE, DB_BAK_FILE, PUBLIC_DB_FILE, ALT_SRC_FILE];
+  const candidatePaths = [DB_FILE, DB_BAK_FILE];
   let parsed: any = null;
 
   for (const p of candidatePaths) {
@@ -56,13 +55,13 @@ function loadDatabase(): DatabaseStore {
       teams: resolvedTeams,
       users: resolvedUsers,
       comments: parsed.comments || INITIAL_COMMENTS,
-      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
+      notifications: Array.isArray(parsed.notifications) && parsed.notifications.length > 0 ? parsed.notifications : INITIAL_NOTIFICATIONS,
       readingHistory: parsed.readingHistory || INITIAL_READING_HISTORY,
       followedComics: parsed.followedComics || INITIAL_FOLLOWED_COMICS,
-      followedTeams: parsed.followedTeams || INITIAL_FOLLOWED_TEAMS,
+      followedTeams: parsed.followedTeams || INITIAL_FOLLOWED_TEAMS || [],
       siteSettings: parsed.siteSettings || {
         ...DEFAULT_SITE_SETTINGS,
-        logoUrl: '/logo.svg',
+        logoUrl: '',
         faviconUrl: '/favicon.svg',
       },
     };
@@ -74,13 +73,13 @@ function loadDatabase(): DatabaseStore {
     teams: INITIAL_TEAMS,
     users: INITIAL_USERS,
     comments: INITIAL_COMMENTS,
-    notifications: [],
+    notifications: INITIAL_NOTIFICATIONS,
     readingHistory: INITIAL_READING_HISTORY,
     followedComics: INITIAL_FOLLOWED_COMICS,
     followedTeams: INITIAL_FOLLOWED_TEAMS,
     siteSettings: {
       ...DEFAULT_SITE_SETTINGS,
-      logoUrl: '/logo.svg',
+      logoUrl: '',
       faviconUrl: '/favicon.svg',
     },
   };
@@ -89,23 +88,45 @@ function loadDatabase(): DatabaseStore {
   return initialStore;
 }
 
+let cachedLightweightComics: any[] | null = null;
+
 function saveDatabase(store: DatabaseStore): void {
   cachedDb = store;
+  cachedLightweightComics = null;
   try {
-    const serialized = JSON.stringify(store, null, 2);
+    const serialized = JSON.stringify(store);
     fs.writeFileSync(DB_FILE, serialized, 'utf-8');
     try {
       fs.writeFileSync(DB_BAK_FILE, serialized, 'utf-8');
-    } catch {}
-    try {
-      fs.writeFileSync(PUBLIC_DB_FILE, serialized, 'utf-8');
-    } catch {}
+    } catch { }
     if (fs.existsSync(DB_FILE)) {
       lastDbMtime = fs.statSync(DB_FILE).mtimeMs;
     }
   } catch (err) {
     console.error('Error writing database file:', err);
   }
+}
+
+function getLightweightComics(comics: any[]): any[] {
+  if (cachedLightweightComics && cachedDb && comics === cachedDb.comics) {
+    return cachedLightweightComics;
+  }
+  const timestampMap = new Map<string, number>();
+  for (const c of comics) {
+    timestampMap.set(c.id, getComicLatestTimestamp(c));
+  }
+  const sorted = [...comics].sort(
+    (a, b) => (timestampMap.get(b.id) || 0) - (timestampMap.get(a.id) || 0)
+  );
+  cachedLightweightComics = sorted.map((c) => ({
+    ...c,
+    chapters: (c.chapters || []).map((ch: any) => ({
+      ...ch,
+      pageCount: ch.pageCount || (Array.isArray(ch.images) ? ch.images.length : 0),
+      images: [],
+    })),
+  }));
+  return cachedLightweightComics;
 }
 
 function syncDbTeamsViews(store: DatabaseStore) {
@@ -201,6 +222,7 @@ function syncDbTeamsViews(store: DatabaseStore) {
         '10/2026': currentMonthReal,
         '2026-10': currentMonthReal,
       };
+      t.totalViews = Math.max(t.totalViews || 0, historicalSum + currentMonthReal);
     }
   }
 }
@@ -208,7 +230,6 @@ function syncDbTeamsViews(store: DatabaseStore) {
 let lastDbMtime = 0;
 let db = loadDatabase();
 syncDbTeamsViews(db);
-saveDatabase(db);
 
 function getDb(): DatabaseStore {
   try {
@@ -219,7 +240,7 @@ function getDb(): DatabaseStore {
         db = loadDatabase();
       }
     }
-  } catch (e) {}
+  } catch (e) { }
   return db;
 }
 
@@ -240,7 +261,7 @@ try {
       }
     }
   }
-} catch {}
+} catch { }
 
 function extractValidImagesFromHtml(htmlText: string): string[] {
   const matches = [
@@ -529,6 +550,12 @@ export async function handleApiPhp(req: IncomingMessage, res: ServerResponse): P
     : 'https://leesincomic.com';
   const today = new Date().toISOString().split('T')[0];
 
+  // Handle data_store.json route directly from memory so no physical public file is needed
+  if (pathname === '/data_store.json' || pathname === '/public/data_store.json') {
+    sendJson(res, 200, db);
+    return true;
+  }
+
   // Handle sitemap and robots routes directly
   if (pathname === '/sitemap.xml') {
     let fullXml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
@@ -687,9 +714,6 @@ Sitemap: ${domain}/sitemap_index.xml
     sendJson(res, 200, { success: true });
     return true;
   }
-
-  // Luôn làm mới db từ đĩa (data_store.json) nếu có thay đổi từ luồng khác
-  getDb();
 
   const action = parsedUrl.searchParams.get('action') || 'ping';
 
@@ -853,27 +877,22 @@ Sitemap: ${domain}/sitemap_index.xml
 
   // 2. GET COMICS / GET TEAM COMICS (ORDER BY latest_chapter_update DESC)
   if (action === 'get_comics' || action === 'get_team_comics') {
-    const currentDb = getDb();
     const teamId = (parsedUrl.searchParams.get('team_id') || parsedUrl.searchParams.get('teamId') || '').trim();
     const teamName = (parsedUrl.searchParams.get('team_name') || parsedUrl.searchParams.get('teamName') || '').trim().toLowerCase();
 
-    let list = [...(currentDb.comics || [])];
+    const allLightweight = getLightweightComics(db.comics || []);
+    let list = allLightweight;
     if (teamId || teamName) {
-      list = list.filter((c) => {
-        const cTeamId = (c.teamId || '').trim();
-        const cTeamName = (c.teamName || '').trim().toLowerCase();
-        const matchId = Boolean(teamId && (cTeamId === teamId || cTeamName === teamId.toLowerCase()));
-        const matchName = Boolean(teamName && (cTeamName === teamName || cTeamId === teamName || cTeamName.includes(teamName)));
-        return matchId || matchName;
+      list = allLightweight.filter((c) => {
+        const matchId = teamId && c.teamId === teamId;
+        const matchName = teamName && c.teamName && c.teamName.toLowerCase().trim() === teamName;
+        return Boolean(matchId || matchName);
       });
     }
 
-    const sortedComics = list.sort(
-      (a, b) => getComicLatestTimestamp(b) - getComicLatestTimestamp(a)
-    );
     sendJson(res, 200, {
       success: true,
-      comics: sortedComics,
+      comics: list,
     });
     return true;
   }
@@ -886,9 +905,18 @@ Sitemap: ${domain}/sitemap_index.xml
       sendJson(res, 404, { success: false, message: 'Không tìm thấy truyện trong cơ sở dữ liệu' });
       return true;
     }
+    const safeSeo = (comic.seo && typeof comic.seo === 'object' && comic.seo.score) ? comic.seo : {
+      focusKeyword: comic.title,
+      metaTitle: `${comic.title} Tiếng Việt Mới Nhất - Leesin Comic`,
+      metaDesc: comic.summary || `Đọc truyện ${comic.title} full tiếng việt, load ảnh siêu nhanh.`,
+      canonicalUrl: `https://leesincomic.com/truyen/${comic.slug}`,
+      score: 95,
+      schemaType: 'ComicBook',
+      ...(comic.seo || {})
+    };
     sendJson(res, 200, {
       success: true,
-      comic,
+      comic: { ...comic, seo: safeSeo },
       views: Number(comic.views) || 0,
     });
     return true;
@@ -925,10 +953,6 @@ Sitemap: ${domain}/sitemap_index.xml
       if (fetched.length > 0) {
         chap.images = fetched;
         saveDatabase(db);
-        try {
-          fs.writeFileSync(path.resolve(process.cwd(), 'src/data/initialDataStore.json'), JSON.stringify(db, null, 2), 'utf-8');
-          fs.writeFileSync(path.resolve(process.cwd(), 'public/data_store.json'), JSON.stringify(db, null, 2), 'utf-8');
-        } catch (e) {}
       }
     }
     sendJson(res, 200, { success: true, chapter: chap });
@@ -1095,6 +1119,7 @@ Sitemap: ${domain}/sitemap_index.xml
       ratingCount: Number(data.ratingCount || data.rating_count) || 1,
       isHot: Boolean(data.isHot || data.is_hot),
       isTrending: Boolean(data.isTrending || data.is_trending),
+      is18Plus: Boolean(data.is18Plus ?? data.is_18_plus ?? false),
       chapters: Array.isArray(data.chapters) ? data.chapters : [],
     };
 
@@ -1106,8 +1131,8 @@ Sitemap: ${domain}/sitemap_index.xml
         data.updatedAt && data.updatedAt !== 'Vừa xong'
           ? data.updatedAt
           : existingComic.updatedAt && existingComic.updatedAt !== 'Vừa xong'
-          ? existingComic.updatedAt
-          : new Date().toISOString();
+            ? existingComic.updatedAt
+            : new Date().toISOString();
 
       db.comics[idx] = {
         ...existingComic,
@@ -1156,21 +1181,57 @@ Sitemap: ${domain}/sitemap_index.xml
   if ((action === 'save_chapter' || action === 'add_chapter' || action === 'update_chapter') && req.method === 'POST') {
     const data = await parseBody(req);
     const comicId = data.comicId || data.comic_id;
+    const cleanId = String(comicId || '').trim();
     const chapId = data.id || `chap-${Date.now()}`;
-    if (!comicId) {
+    if (!cleanId) {
       sendJson(res, 400, { success: false, message: 'Dữ liệu chương thiếu comicId!' });
       return true;
     }
 
-    const comic = db.comics.find((c) => c.id === comicId || c.slug === comicId);
+    const withoutPrefix = cleanId.replace(/^comic-/, '');
+    const withPrefix = cleanId.startsWith('comic-') ? cleanId : `comic-${cleanId}`;
+
+    let comic = db.comics.find(
+      (c) =>
+        c.id === cleanId ||
+        c.slug === cleanId ||
+        c.id === withPrefix ||
+        c.slug === withoutPrefix ||
+        (data.comicTitle && c.title && c.title.toLowerCase().trim() === String(data.comicTitle).toLowerCase().trim())
+    );
+    if (!comic) {
+      const newC = {
+        id: cleanId,
+        title: data.comicTitle || 'Truyện Mới',
+        slug: withoutPrefix || cleanId,
+        coverImage: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600',
+        genres: ['Manhwa'],
+        authors: ['Đang cập nhật'],
+        teamId: data.teamId || '',
+        teamName: data.teamName || '',
+        chapters: [],
+        views: 0,
+        likes: 0,
+        follows: 0,
+        rating: 5.0,
+        ratingCount: 1,
+        updatedAt: new Date().toISOString(),
+      };
+      db.comics.push(newC);
+      comic = newC;
+    }
+
     if (comic) {
       comic.chapters = comic.chapters || [];
-      const chapIdx = comic.chapters.findIndex((ch: any) => ch.id === chapId);
-      const nowIso = new Date().toISOString();
       const chapNum = Number(data.chapterNumber || data.chapter_number) || 1;
+      const chapIdx = comic.chapters.findIndex(
+        (ch: any) => ch.id === chapId || (Number(ch.chapterNumber) === chapNum && chapNum > 0)
+      );
+      const nowIso = new Date().toISOString();
+      const resolvedChapId = chapIdx >= 0 ? comic.chapters[chapIdx].id : chapId;
       const normalizedChap = {
         ...data,
-        id: chapId,
+        id: resolvedChapId,
         comicId: comic.id,
         comicTitle: comic.title,
         chapterNumber: chapNum,
@@ -1188,8 +1249,8 @@ Sitemap: ${domain}/sitemap_index.xml
           existingChap.createdAt && existingChap.createdAt !== 'Vừa xong'
             ? existingChap.createdAt
             : data.createdAt && data.createdAt !== 'Vừa xong'
-            ? data.createdAt
-            : nowIso;
+              ? data.createdAt
+              : nowIso;
         const nextUpdatedAt =
           data.updatedAt && data.updatedAt !== 'Vừa xong' ? data.updatedAt : nowIso;
         comic.chapters[chapIdx] = {
@@ -1287,7 +1348,6 @@ Sitemap: ${domain}/sitemap_index.xml
   // 9. GET TEAMS
   if (action === 'get_teams') {
     syncDbTeamsViews(db);
-    saveDatabase(db);
     const enrichedTeams = db.teams.map((t) => {
       const m10 = (t.monthlyViews && (t.monthlyViews['2026-10'] || t.monthlyViews['10/2026'])) || 0;
       return {
@@ -1386,14 +1446,12 @@ Sitemap: ${domain}/sitemap_index.xml
 
     const hash = found.passwordHash || '';
     let matched = false;
-    if (found.password && found.password === passInput) {
-      matched = true;
-    } else if (passInput === 'password' || passInput === 'admin123') {
-      matched = true;
-    } else if (hash && hash === passInput) {
-      matched = true;
-    } else if (hash.startsWith('$2y$') && passInput === 'password') {
-      matched = true;
+    if (found.password) {
+      matched = (found.password === passInput);
+    } else if (hash) {
+      matched = (hash === passInput) || (hash.startsWith('$2y$') && passInput === 'password');
+    } else {
+      matched = (passInput === 'password' || passInput === 'admin123');
     }
 
     if (matched) {
@@ -1416,6 +1474,14 @@ Sitemap: ${domain}/sitemap_index.xml
     const data = await parseBody(req);
     const loginInput = (data?.account || data?.username || data?.email || '').trim().toLowerCase();
     const newPass = (data?.newPassword || data?.password || '').trim();
+    const otp = (data?.otp || '').trim();
+    const apiKey = (req.headers['x-api-key'] || req.headers['authorization'] || '') as string;
+    const isAuthorized = apiKey === 'Leesin_Secret_MySQL_Key_2026' || otp === '888888';
+
+    if (!isAuthorized) {
+      sendJson(res, 403, { success: false, message: 'Truy cập bị từ chối: Mã OTP xác thực không đúng hoặc API Key không hợp lệ!' });
+      return true;
+    }
 
     const found = db.users.find((u: any) => {
       const uUsername = (u.username || '').trim().toLowerCase();
@@ -1448,24 +1514,48 @@ Sitemap: ${domain}/sitemap_index.xml
   // 12. SAVE USER
   if (action === 'save_user' && req.method === 'POST') {
     const data = await parseBody(req);
-    if (data && (data.id || data.email)) {
+    const cleanId = (data?.id || '').trim();
+    const cleanEmail = (data?.email || '').trim().toLowerCase();
+    const cleanUsername = (data?.username || '').trim().toLowerCase().replace(/^@/, '');
+
+    if (data && (cleanId || cleanEmail || cleanUsername)) {
       const idx = db.users.findIndex(
         (u) =>
-          (data.id && u.id === data.id) ||
-          (data.email && u.email && u.email.toLowerCase() === data.email.toLowerCase())
+          (cleanId && u.id === cleanId) ||
+          (cleanUsername && u.username && u.username.toLowerCase().replace(/^@/, '') === cleanUsername) ||
+          (cleanEmail && u.email && u.email.toLowerCase() === cleanEmail)
       );
+
+      const resolvedAvatar = (data.avatar && typeof data.avatar === 'string' && data.avatar.trim()) ? data.avatar.trim() : (idx >= 0 ? db.users[idx].avatar : undefined);
+
       if (idx >= 0) {
         db.users[idx] = {
           ...db.users[idx],
           ...data,
+          avatar: resolvedAvatar || db.users[idx].avatar,
           role: data.role !== undefined ? data.role : db.users[idx].role,
           teamId: data.teamId !== undefined ? data.teamId : db.users[idx].teamId,
           teamName: data.teamName !== undefined ? data.teamName : db.users[idx].teamName,
           canUpload: data.canUpload !== undefined ? data.canUpload : db.users[idx].canUpload,
         };
       } else {
-        db.users.push(data);
+        const newUserObj = {
+          ...data,
+          avatar: resolvedAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        };
+        db.users.push(newUserObj);
       }
+
+      // Đồng bộ avatar vào tất cả bình luận của tài khoản này
+      const targetUserId = cleanId || (idx >= 0 ? db.users[idx].id : undefined);
+      if (resolvedAvatar && targetUserId && Array.isArray(db.comments)) {
+        for (const cm of db.comments) {
+          if (cm.userId === targetUserId) {
+            cm.userAvatar = resolvedAvatar;
+          }
+        }
+      }
+
       saveDatabase(db);
       sendJson(res, 200, { success: true, message: 'Lưu thông tin người dùng thành công!' });
     } else {
@@ -1548,8 +1638,8 @@ Sitemap: ${domain}/sitemap_index.xml
   // 18. GET READING HISTORY
   if (action === 'get_reading_history') {
     const userId = parsedUrl.searchParams.get('user_id');
-    const filtered = (userId && userId !== 'all')
-      ? db.readingHistory.filter((h) => !h.userId || h.userId === userId || (userId !== 'guest' && h.userId === 'guest'))
+    const filtered = userId
+      ? db.readingHistory.filter((h) => !h.userId || h.userId === userId)
       : db.readingHistory;
     sendJson(res, 200, { success: true, history: filtered });
     return true;
@@ -1632,8 +1722,8 @@ Sitemap: ${domain}/sitemap_index.xml
   // 23b. GET FOLLOWED TEAMS
   if (action === 'get_followed_teams') {
     const userId = parsedUrl.searchParams.get('user_id');
-    const filtered = (userId && userId !== 'guest' && userId !== 'all')
-      ? (db.followedTeams || []).filter((f) => !f.userId || f.userId === userId || f.userId === 'guest')
+    const filtered = userId
+      ? (db.followedTeams || []).filter((f: any) => f.userId === userId)
       : (db.followedTeams || []);
     sendJson(res, 200, { success: true, followedTeams: filtered });
     return true;
@@ -1644,21 +1734,16 @@ Sitemap: ${domain}/sitemap_index.xml
     const data = await parseBody(req);
     if (data && data.teamId) {
       if (!Array.isArray(db.followedTeams)) db.followedTeams = [];
-      const cleanTeamId = (data.teamId || '').toLowerCase().trim();
-      const cleanTeamName = (data.teamName || '').toLowerCase().trim();
       const exists = db.followedTeams.some(
-        (f) =>
-          ((f.teamId && f.teamId.toLowerCase().trim() === cleanTeamId) ||
-            (cleanTeamName && f.teamName && f.teamName.toLowerCase().trim() === cleanTeamName)) &&
-          (data.userId ? f.userId === data.userId : true)
+        (f: any) => f.teamId === data.teamId && f.userId === data.userId
       );
       if (!exists) {
         db.followedTeams.unshift(data);
         saveDatabase(db);
       }
-      sendJson(res, 200, { success: true, message: 'Đã theo dõi nhóm dịch thành công!' });
+      sendJson(res, 200, { success: true, message: 'Đã theo dõi nhóm dịch!' });
     } else {
-      sendJson(res, 400, { success: false, message: 'Dữ liệu theo dõi nhóm không hợp lệ!' });
+      sendJson(res, 400, { success: false, message: 'Dữ liệu không hợp lệ!' });
     }
     return true;
   }
@@ -1666,18 +1751,14 @@ Sitemap: ${domain}/sitemap_index.xml
   // 23d. UNFOLLOW TEAM
   if (action === 'unfollow_team' && req.method === 'POST') {
     const data = await parseBody(req);
-    const { userId, teamId } = data;
-    if (teamId && Array.isArray(db.followedTeams)) {
-      const cleanTeamId = (teamId || '').toLowerCase().trim();
-      db.followedTeams = db.followedTeams.filter(
-        (f) =>
-          !(
-            ((f.teamId && f.teamId.toLowerCase().trim() === cleanTeamId) ||
-              (f.teamName && f.teamName.toLowerCase().trim() === cleanTeamId)) &&
-            (userId ? f.userId === userId : true)
-          )
-      );
-      saveDatabase(db);
+    const { userId, teamId } = data || {};
+    if (teamId) {
+      if (Array.isArray(db.followedTeams)) {
+        db.followedTeams = db.followedTeams.filter(
+          (f: any) => !(f.teamId === teamId && (userId ? f.userId === userId : true))
+        );
+        saveDatabase(db);
+      }
     }
     sendJson(res, 200, { success: true, message: 'Đã hủy theo dõi nhóm dịch!' });
     return true;
@@ -1685,10 +1766,9 @@ Sitemap: ${domain}/sitemap_index.xml
 
   // 24. GET NOTIFICATIONS
   if (action === 'get_notifications') {
-    const currentDb = getDb();
     const userId = parsedUrl.searchParams.get('user_id') || '';
     const teamId = parsedUrl.searchParams.get('team_id') || '';
-    const teamName = (parsedUrl.searchParams.get('team_name') || '').trim().toLowerCase();
+    const teamName = parsedUrl.searchParams.get('team_name') || '';
     const role = parsedUrl.searchParams.get('role') || '';
     const limit = parseInt(parsedUrl.searchParams.get('limit') || '100', 10);
 
@@ -1698,46 +1778,51 @@ Sitemap: ${domain}/sitemap_index.xml
       return true;
     }
 
-    let list = Array.isArray(currentDb.notifications) ? currentDb.notifications : [];
+    let list = Array.isArray(db.notifications) ? db.notifications : [];
     if (role === 'ADMIN') {
-      // Admin: không xem chung bình luận của nhóm khác
-      list = list.filter((n) => {
-        if (n.type === 'COMMENT') {
-          return (
-            (teamId && n.recipientTeamId === teamId) ||
-            (teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim()) ||
-            (userId && n.recipientUserId === userId)
-          );
-        }
-        return true;
-      });
+      // Admin tối cao: nhận tất cả thông báo hệ thống, bình luận, cấp pass và chương mới
+      list = [...list];
     } else if (role === 'TEAM_LEADER') {
+      const isLessinCurrentUser =
+        (teamId === 'team-lessin-comic' || teamId === 'team-leesin') ||
+        (teamName.toLowerCase().includes('lessin') || teamName.toLowerCase().includes('leesin'));
+
       list = list.filter((n) => {
-        if (n.type === 'COMMENT') {
-          return (
-            (teamId && n.recipientTeamId === teamId) ||
-            (teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim()) ||
-            (userId && n.recipientUserId === userId)
-          );
-        }
-        return (
+        // Direct recipient
+        const matchUser = Boolean(userId && n.recipientUserId === userId);
+        if (matchUser) return true;
+
+        // Is it for this team?
+        const isLessinNotif =
+          (n.recipientTeamId === 'team-lessin-comic' || n.recipientTeamId === 'team-leesin') ||
+          (n.recipientTeamName && (n.recipientTeamName.toLowerCase().includes('lessin') || n.recipientTeamName.toLowerCase().includes('leesin')));
+
+        const matchTeam = Boolean(
           (teamId && n.recipientTeamId === teamId) ||
-          (teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim()) ||
-          (userId && n.recipientUserId === userId) ||
-          n.recipientRole === 'TEAM_LEADER' ||
-          n.recipientRole === 'ALL'
+          (isLessinCurrentUser && isLessinNotif) ||
+          (teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim())
         );
+        if (matchTeam) return true;
+
+        // General non-comment system announcement for all team leaders
+        if (n.type !== 'COMMENT' && n.type !== 'REPLY' && !n.recipientTeamId && !n.recipientUserId) {
+          return n.recipientRole === 'TEAM_LEADER' || n.recipientRole === 'ALL';
+        }
+
+        return false;
       });
     } else {
       list = list.filter((n) => {
-        if (n.type === 'COMMENT') {
-          return userId && n.recipientUserId === userId;
+        // Direct recipient (reply or direct message)
+        const matchUser = Boolean(userId && n.recipientUserId === userId);
+        if (matchUser) return true;
+
+        // General non-comment announcement for all readers (cannot be a comment or reply)
+        if (n.type !== 'COMMENT' && n.type !== 'REPLY' && !n.recipientUserId) {
+          return n.recipientRole === 'READER' || n.recipientRole === 'ALL';
         }
-        return (
-          (userId && n.recipientUserId === userId) ||
-          n.recipientRole === 'READER' ||
-          n.recipientRole === 'ALL'
-        );
+
+        return false;
       });
     }
 
@@ -1809,13 +1894,11 @@ Sitemap: ${domain}/sitemap_index.xml
           isTarget = true;
         } else if (role === 'TEAM_LEADER') {
           isTarget =
-            (teamId && n.recipientTeamId === teamId) ||
-            (teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim()) ||
-            (userId && n.recipientUserId === userId) ||
-            n.recipientRole === 'TEAM_LEADER' ||
-            n.recipientRole === 'ALL';
+            Boolean(userId && n.recipientUserId === userId) ||
+            Boolean(teamId && n.recipientTeamId === teamId) ||
+            Boolean(teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim());
         } else if (userId) {
-          isTarget = (userId && n.recipientUserId === userId) || n.recipientRole === 'READER' || n.recipientRole === 'ALL';
+          isTarget = Boolean(n.recipientUserId === userId);
         }
         return isTarget ? { ...n, isRead: true } : n;
       });
@@ -1854,13 +1937,11 @@ Sitemap: ${domain}/sitemap_index.xml
           if (role === 'ADMIN') isTarget = true;
           else if (role === 'TEAM_LEADER') {
             isTarget =
-              (teamId && n.recipientTeamId === teamId) ||
-              (teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim()) ||
-              (userId && n.recipientUserId === userId) ||
-              n.recipientRole === 'TEAM_LEADER' ||
-              n.recipientRole === 'ALL';
+              Boolean(userId && n.recipientUserId === userId) ||
+              Boolean(teamId && n.recipientTeamId === teamId) ||
+              Boolean(teamName && n.recipientTeamName && n.recipientTeamName.toLowerCase().trim() === teamName.toLowerCase().trim());
           } else if (userId) {
-            isTarget = (userId && n.recipientUserId === userId) || n.recipientRole === 'READER' || n.recipientRole === 'ALL';
+            isTarget = Boolean(n.recipientUserId === userId);
           }
           return !isTarget;
         });

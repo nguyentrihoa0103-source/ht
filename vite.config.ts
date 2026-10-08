@@ -1,8 +1,8 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
-import {handleApiPhp} from './src/server/mockApiHandler';
+import { defineConfig } from 'vite';
+import { handleApiPhp } from './src/server/mockApiHandler';
 
 export default defineConfig(() => {
   return {
@@ -26,13 +26,16 @@ export default defineConfig(() => {
         },
       },
     ],
+    define: {
+      __APP_BUILD_ID__: JSON.stringify(Date.now().toString()),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
     build: {
-      chunkSizeWarningLimit: 2500,
+      chunkSizeWarningLimit: 10000,
       rollupOptions: {
         output: {
           manualChunks: (id) => {
@@ -45,7 +48,7 @@ export default defineConfig(() => {
             if (id.includes('node_modules/jszip/') || id.includes('node_modules/canvas-confetti/')) {
               return 'vendor-utils';
             }
-            if (id.includes('src/data/initialData')) {
+            if (id.includes('src/data/initialComicsData')) {
               return 'initial-comics-data';
             }
           },
@@ -58,7 +61,18 @@ export default defineConfig(() => {
       allowedHosts: true as const,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: [
+          /data_store\.json/,
+          /initialDataStore\.json/,
+          /leesin_teams_crawled\.json/,
+          /\.sql(\.gz)?$/,
+          '**/*data_store*.json*',
+          '**/leesin_teams_crawled.json',
+          '**/*.sql',
+          '**/*.sql.gz',
+        ],
+      },
     },
   };
 });

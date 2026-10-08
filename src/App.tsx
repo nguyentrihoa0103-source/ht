@@ -26,6 +26,7 @@ import {
   FollowedTeamItem,
   SiteSettings,
   DEFAULT_SITE_SETTINGS,
+  DEFAULT_CHAPTER_AD,
   AppNotification,
 } from './types';
 import {
@@ -94,6 +95,30 @@ function saveComicsToCache(_comicList: Comic[]) {
   }
 }
 
+declare const __APP_BUILD_ID__: string | undefined;
+
+// Tự động kiểm tra và làm mới cache khi có build mới (cache-busting tự động)
+(() => {
+  try {
+    const currentBuildId = typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : INITIAL_DATA_VERSION;
+    const savedBuildId = localStorage.getItem('leesincomic_app_build_id');
+    if (savedBuildId !== currentBuildId) {
+      console.log(`[CacheBuster] Phát hiện phiên bản build mới (${savedBuildId || 'none'} -> ${currentBuildId}). Dọn dẹp cache cũ...`);
+      localStorage.removeItem('leesincomic_site_settings');
+      localStorage.removeItem('leesincomic_users');
+      localStorage.removeItem('leesincomic_comics');
+      localStorage.removeItem('leesincomic_comics_cache');
+      localStorage.removeItem('leesincomic_teams');
+      localStorage.removeItem('leesincomic_comments');
+      localStorage.removeItem('leesincomic_followed_teams');
+      localStorage.removeItem('leesincomic_data_version');
+      localStorage.setItem('leesincomic_app_build_id', currentBuildId);
+    }
+  } catch (e) {
+    // Storage quota hoặc chế độ ẩn danh (private browsing)
+  }
+})();
+
 export default function App() {
   // MySQL Configuration (Enabled by default to connect to SQL database)
   const [mysqlConfig, setMysqlConfig] = useState<MysqlConfig>(() => {
@@ -116,15 +141,22 @@ export default function App() {
       localStorage.removeItem('leesincomic_comics_cache');
       localStorage.removeItem('leesincomic_data_version');
       localStorage.removeItem('leesincomic_teams');
-      localStorage.removeItem('leesincomic_users');
       localStorage.removeItem('leesincomic_comments');
-      localStorage.removeItem('leesincomic_site_settings');
       localStorage.removeItem('leesincomic_followed_teams');
     } catch (e) {}
     return INITIAL_COMICS;
   });
   const [teams, setTeams] = useState<ScanTeam[]>(() => INITIAL_TEAMS);
-  const [users, setUsers] = useState<User[]>(() => INITIAL_USERS);
+  const [users, setUsers] = useState<User[]>(() => {
+    try {
+      const saved = localStorage.getItem('leesincomic_users');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_USERS;
+  });
   const [comments, setComments] = useState<ChapterComment[]>(() => INITIAL_COMMENTS);
 
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
@@ -132,27 +164,68 @@ export default function App() {
   const [adminInitialTab, setAdminInitialTab] = useState<'team-views' | 'manage-comics' | 'manage-users' | 'add-comic' | 'seo-rankmath' | 'watermark-settings' | 'cdn-server' | 'mysql-database' | 'site-settings' | 'footer-settings' | 'manage-comments' | 'ads-settings' | 'migrate-leesin' | 'notifications'>('manage-comics');
   const [adminResetTargetUser, setAdminResetTargetUser] = useState<User | null>(null);
 
-  const [siteSettings, setSiteSettings] = useState<SiteSettings>(() => ({
-    ...DEFAULT_SITE_SETTINGS,
-    logoUrl: '/logo.svg',
-    faviconUrl: '/favicon.svg',
-    watermarkText: '',
-    watermarkMode: 'logo' as const,
-    watermark: {
-      ...DEFAULT_SITE_SETTINGS.watermark,
-      text: '',
-      mode: 'logo' as const,
-    },
-  }));
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>(() => {
+    try {
+      const saved = localStorage.getItem('leesincomic_site_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...DEFAULT_SITE_SETTINGS,
+            ...parsed,
+          };
+        }
+      }
+    } catch (e) {}
+    return {
+      ...DEFAULT_SITE_SETTINGS,
+      logoUrl: '',
+      faviconUrl: '/favicon.svg',
+      watermarkText: '',
+      watermarkMode: 'logo' as const,
+      watermark: {
+        ...DEFAULT_SITE_SETTINGS.watermark,
+        text: '',
+        mode: 'logo' as const,
+      },
+    };
+  });
 
-  // Reader Reading History State (User-specific) - Lấy từ SQL database theo userId
-  const [readingHistory, setReadingHistory] = useState<ReadingHistoryItem[]>([]);
+  // Reader Reading History State (User-specific) - Lấy từ LocalStorage & đồng bộ SQL database
+  const [readingHistory, setReadingHistory] = useState<ReadingHistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('leesincomic_reading_history');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
 
-  // Reader Followed Comics State (User-specific) - Lấy từ SQL database theo userId
-  const [followedComics, setFollowedComics] = useState<FollowedComicItem[]>([]);
+  // Reader Followed Comics State (User-specific) - Lấy từ LocalStorage & đồng bộ SQL database
+  const [followedComics, setFollowedComics] = useState<FollowedComicItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('leesincomic_followed_comics');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
 
-  // Reader Followed Teams State (User-specific) - Lấy từ SQL database theo userId
-  const [followedTeams, setFollowedTeams] = useState<FollowedTeamItem[]>(() => INITIAL_FOLLOWED_TEAMS);
+  // Reader Followed Teams State (User-specific) - Lấy từ LocalStorage & đồng bộ SQL database
+  const [followedTeams, setFollowedTeams] = useState<FollowedTeamItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('leesincomic_followed_teams');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_FOLLOWED_TEAMS;
+  });
 
   // Image Server Configuration (tachserver.site)
   const [imageServerConfig, setImageServerConfig] = useState<ImageServerConfig>(() => {
@@ -166,10 +239,31 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
+  // Tự động lưu trữ lịch sử đọc truyện vào LocalStorage để không bị mất khi F5 hoặc duyệt ẩn danh
+  useEffect(() => {
+    try {
+      localStorage.setItem('leesincomic_reading_history', JSON.stringify(readingHistory));
+    } catch (e) {}
+  }, [readingHistory]);
+
+  // Tự động lưu trữ danh sách theo dõi truyện vào LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('leesincomic_followed_comics', JSON.stringify(followedComics));
+    } catch (e) {}
+  }, [followedComics]);
+
+  // Tự động lưu trữ danh sách theo dõi nhóm dịch vào LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('leesincomic_followed_teams', JSON.stringify(followedTeams));
+    } catch (e) {}
+  }, [followedTeams]);
+
   // =========================================================================
   // NOTIFICATION SYSTEM: SQL / BACKEND LÀ SINGLE SOURCE OF TRUTH (Không dùng localStorage)
   // =========================================================================
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => INITIAL_NOTIFICATIONS);
 
   // Helper broadcast thông báo tức thời cho các tab/cửa sổ khác cùng làm mới thông báo từ SQL
   const notifyOtherTabsNotificationChange = useCallback(() => {
@@ -346,8 +440,17 @@ export default function App() {
               ? remoteSettings.faviconUrl
               : (remoteSettings.favicon_url !== undefined ? remoteSettings.favicon_url : prev.faviconUrl);
 
+            let parsedChapterAd = remoteSettings.chapterAd;
+            if (typeof parsedChapterAd === 'string') {
+              try { parsedChapterAd = JSON.parse(parsedChapterAd); } catch (e) {}
+            }
+
             const nextSettings = {
               ...prev,
+              ...remoteSettings,
+              chapterAd: parsedChapterAd
+                ? { ...(prev.chapterAd || DEFAULT_CHAPTER_AD), ...parsedChapterAd }
+                : (prev.chapterAd || DEFAULT_CHAPTER_AD),
               siteName: remoteSettings.siteName || remoteSettings.site_name || prev.siteName,
               siteSlogan: remoteSettings.siteSlogan || remoteSettings.site_slogan || prev.siteSlogan,
               siteDomain: remoteSettings.siteDomain || remoteSettings.site_domain || prev.siteDomain,
@@ -395,24 +498,24 @@ export default function App() {
               if (appleFavEl) appleFavEl.href = nextSettings.faviconUrl;
             }
 
-            // Cập nhật thẻ SEO Head trên trình duyệt nếu đang ở trang chủ
-            const hTitle = nextSettings.headTitle || nextSettings.metaTitle || (nextSettings.siteName ? `${nextSettings.siteName} - Đọc Truyện Tranh Online Miễn Phí` : 'Leesin Comic - Đọc Truyện Tranh Online Miễn Phí');
-            const hDesc = nextSettings.siteDescription || nextSettings.metaDescription || 'Website đọc truyện tranh Manga, Manhwa, Manhua online bản quyền chất lượng cao, cập nhật chương mới mỗi ngày tại Leesin Comic (leesincomic.com).';
-            updateSeoMeta({
-              title: hTitle,
-              description: hDesc,
-              url: nextSettings.siteDomain || window.location.origin,
-            });
-
-            if (remoteSettings.imageServerConfig) {
-              setImageServerConfig(remoteSettings.imageServerConfig);
-            }
-            if (remoteSettings.mysqlConfig) {
-              setMysqlConfig((prev) => ({ ...prev, ...remoteSettings.mysqlConfig }));
+            // Cập nhật thẻ SEO Head trên trình duyệt nếu đang ở trang chủ (tránh đè title của /lich-su, /theo-doi, ...)
+            const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+            const isHomePage = currentPath === '/' || currentPath === '/index.html';
+            if (isHomePage) {
+              const hTitle = nextSettings.headTitle || nextSettings.metaTitle || (nextSettings.siteName ? `${nextSettings.siteName} - Đọc Truyện Tranh Online Miễn Phí` : 'Leesin Comic - Đọc Truyện Tranh Online Miễn Phí');
+              const hDesc = nextSettings.siteDescription || nextSettings.metaDescription || 'Website đọc truyện tranh Manga, Manhwa, Manhua online bản quyền chất lượng cao, cập nhật chương mới mỗi ngày tại Leesin Comic (leesincomic.com).';
+              updateSeoMeta({
+                title: hTitle,
+                description: hDesc,
+                url: nextSettings.siteDomain || window.location.origin,
+              });
             }
 
             if (nextSettings.watermarkText) setWatermarkText(nextSettings.watermarkText);
             if (nextSettings.watermarkOpacity) setWatermarkOpacity(nextSettings.watermarkOpacity);
+            try {
+              localStorage.setItem('leesincomic_site_settings', JSON.stringify(nextSettings));
+            } catch (e) {}
             return nextSettings;
           });
         }
@@ -423,9 +526,9 @@ export default function App() {
         fetchCommentsFromMysql(mysqlConfig),
         fetchUsersFromMysql(mysqlConfig),
         fetchTeamsFromMysql(mysqlConfig),
-        fetchReadingHistoryFromMysql(mysqlConfig, currentUser ? currentUser.id : 'guest'),
-        fetchFollowedComicsFromMysql(mysqlConfig, currentUser ? currentUser.id : 'guest'),
-        fetchFollowedTeamsFromMysql(mysqlConfig, currentUser ? currentUser.id : 'guest'),
+        currentUser ? fetchReadingHistoryFromMysql(mysqlConfig, currentUser.id) : Promise.resolve(null),
+        currentUser ? fetchFollowedComicsFromMysql(mysqlConfig, currentUser.id) : Promise.resolve(null),
+        currentUser ? fetchFollowedTeamsFromMysql(mysqlConfig, currentUser.id) : Promise.resolve(null),
       ]).then(([remoteComics, remoteComments, remoteUsers, remoteTeams, remoteHist, remoteFollows, remoteFollowTeams]) => {
         if (remoteComics !== null && Array.isArray(remoteComics)) {
           const normalizedComics = remoteComics.map((c) => ({
@@ -436,18 +539,33 @@ export default function App() {
             // Preserve any in-memory chapter images already loaded in reader
             const prevMap = new Map<string, Comic>(prevComics.map((pc) => [pc.id, pc]));
             const merged = normalizedComics.map((nc) => {
-              const existing = prevMap.get(nc.id);
+              const existing = prevMap.get(nc.id) || prevMap.get(nc.slug);
               if (!existing) return nc;
               const existingChapMap = new Map<string, Chapter>((existing.chapters || []).map((ch) => [ch.id, ch]));
+              const remoteChapIds = new Set((nc.chapters || []).map((ch) => ch.id));
+              const remoteChapNums = new Set((nc.chapters || []).map((ch) => Number(ch.chapterNumber)));
+
+              const mergedChapters = (nc.chapters || []).map((nch) => {
+                const exCh =
+                  existingChapMap.get(nch.id) ||
+                  (existing.chapters || []).find((ch) => Number(ch.chapterNumber) === Number(nch.chapterNumber));
+                if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
+                  return { ...nch, images: exCh.images };
+                }
+                return nch;
+              });
+
+              // Preserve locally added chapters that might not yet be in remote response
+              for (const exCh of (existing.chapters || [])) {
+                if (!remoteChapIds.has(exCh.id) && !remoteChapNums.has(Number(exCh.chapterNumber))) {
+                  mergedChapters.push(exCh);
+                }
+              }
+              mergedChapters.sort((a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0));
+
               return {
                 ...nc,
-                chapters: (nc.chapters || []).map((nch) => {
-                  const exCh = existingChapMap.get(nch.id);
-                  if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
-                    return { ...nch, images: exCh.images };
-                  }
-                  return nch;
-                }),
+                chapters: mergedChapters,
               };
             });
             saveComicsToCache(merged);
@@ -458,15 +576,29 @@ export default function App() {
             const fresh = normalizedComics.find((c) => c.id === currentSelected.id || c.slug === currentSelected.slug);
             if (!fresh) return currentSelected;
             const existingChapMap = new Map<string, Chapter>((currentSelected.chapters || []).map((ch) => [ch.id, ch]));
+            const remoteChapIds = new Set((fresh.chapters || []).map((ch) => ch.id));
+            const remoteChapNums = new Set((fresh.chapters || []).map((ch) => Number(ch.chapterNumber)));
+
+            const mergedChapters = (fresh.chapters || []).map((nch) => {
+              const exCh =
+                existingChapMap.get(nch.id) ||
+                (currentSelected.chapters || []).find((ch) => Number(ch.chapterNumber) === Number(nch.chapterNumber));
+              if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
+                return { ...nch, images: exCh.images };
+              }
+              return nch;
+            });
+
+            for (const exCh of (currentSelected.chapters || [])) {
+              if (!remoteChapIds.has(exCh.id) && !remoteChapNums.has(Number(exCh.chapterNumber))) {
+                mergedChapters.push(exCh);
+              }
+            }
+            mergedChapters.sort((a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0));
+
             return {
               ...fresh,
-              chapters: (fresh.chapters || []).map((nch) => {
-                const exCh = existingChapMap.get(nch.id);
-                if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
-                  return { ...nch, images: exCh.images };
-                }
-                return nch;
-              }),
+              chapters: mergedChapters,
             };
           });
           setActiveChapter((currentChap) => {
@@ -496,22 +628,34 @@ export default function App() {
         if (remoteUsers !== null && Array.isArray(remoteUsers) && remoteUsers.length > 0) {
           const userList = remoteUsers;
           setUsers(userList);
+          try {
+            localStorage.setItem('leesincomic_users', JSON.stringify(userList));
+          } catch (e) {}
           setCurrentUser((prevUser) => {
             if (!prevUser) return null;
-            const freshUser = userList.find(
-              (u) =>
-                u.id === prevUser.id ||
-                (u.email && prevUser.email && u.email.trim().toLowerCase() === prevUser.email.trim().toLowerCase())
-            );
+            const freshUser = userList.find((u) => {
+              if (u.id && prevUser.id && u.id === prevUser.id) return true;
+              const u1 = (prevUser.username || '').trim().toLowerCase().replace(/^@/, '');
+              const u2 = (u.username || '').trim().toLowerCase().replace(/^@/, '');
+              if (u1 && u2 && u1 === u2) return true;
+              const e1 = (prevUser.email || '').trim().toLowerCase();
+              const e2 = (u.email || '').trim().toLowerCase();
+              if (e1 && e2 && e1 === e2) return true;
+              return false;
+            });
             if (freshUser) {
               const updatedUser: User = {
                 ...prevUser,
                 ...freshUser,
                 role: freshUser.role || prevUser.role,
+                avatar: (freshUser.avatar && freshUser.avatar.trim()) ? freshUser.avatar : prevUser.avatar,
                 teamId: freshUser.teamId !== undefined ? freshUser.teamId : prevUser.teamId,
                 teamName: freshUser.teamName !== undefined ? freshUser.teamName : prevUser.teamName,
                 canUpload: freshUser.role === 'ADMIN' || freshUser.role === 'TEAM_LEADER' || !!freshUser.canUpload,
               };
+              try {
+                localStorage.setItem('leesincomic_current_user', JSON.stringify(updatedUser));
+              } catch (e) {}
               return updatedUser;
             }
             return prevUser;
@@ -519,13 +663,37 @@ export default function App() {
         }
 
         if (remoteHist !== null && Array.isArray(remoteHist)) {
-          setReadingHistory(remoteHist);
+          setReadingHistory((prev) => {
+            const remoteMap = new Map(remoteHist.map((h) => [h.comicId, h]));
+            const localOnly = prev.filter((h) => !remoteMap.has(h.comicId));
+            const merged = [...remoteHist, ...localOnly];
+            try {
+              localStorage.setItem('leesincomic_reading_history', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
         }
         if (remoteFollows !== null && Array.isArray(remoteFollows)) {
-          setFollowedComics(remoteFollows);
+          setFollowedComics((prev) => {
+            const remoteMap = new Map(remoteFollows.map((f) => [f.comicId, f]));
+            const localOnly = prev.filter((f) => !remoteMap.has(f.comicId));
+            const merged = [...remoteFollows, ...localOnly];
+            try {
+              localStorage.setItem('leesincomic_followed_comics', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
         }
         if (remoteFollowTeams !== null && Array.isArray(remoteFollowTeams)) {
-          setFollowedTeams(remoteFollowTeams);
+          setFollowedTeams((prev) => {
+            const remoteMap = new Map(remoteFollowTeams.map((t) => [t.teamId, t]));
+            const localOnly = prev.filter((t) => !remoteMap.has(t.teamId));
+            const merged = [...remoteFollowTeams, ...localOnly];
+            try {
+              localStorage.setItem('leesincomic_followed_teams', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
         }
       }).catch((err) => {
         console.warn('Lỗi lấy dữ liệu từ MySQL:', err);
@@ -536,11 +704,17 @@ export default function App() {
   // Keep currentUser synchronized whenever the users state changes
   useEffect(() => {
     if (!currentUser) return;
-    const matched = users.find(
-      (u) =>
-        u.id === currentUser.id ||
-        (u.email && currentUser.email && u.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase())
-    );
+    if (users === INITIAL_USERS) return; // Tránh mock data tĩnh đè lên session thật khi vừa F5
+    const matched = users.find((u) => {
+      if (u.id && currentUser.id && u.id === currentUser.id) return true;
+      const u1 = (currentUser.username || '').trim().toLowerCase().replace(/^@/, '');
+      const u2 = (u.username || '').trim().toLowerCase().replace(/^@/, '');
+      if (u1 && u2 && u1 === u2) return true;
+      const e1 = (currentUser.email || '').trim().toLowerCase();
+      const e2 = (u.email || '').trim().toLowerCase();
+      if (e1 && e2 && e1 === e2) return true;
+      return false;
+    });
     if (matched) {
       if (
         matched.role !== currentUser.role ||
@@ -548,11 +722,12 @@ export default function App() {
         matched.teamName !== currentUser.teamName ||
         matched.canUpload !== currentUser.canUpload ||
         matched.name !== currentUser.name ||
-        matched.avatar !== currentUser.avatar
+        (matched.avatar && matched.avatar.trim() && matched.avatar !== currentUser.avatar)
       ) {
         const synced: User = {
           ...currentUser,
           ...matched,
+          avatar: (matched.avatar && matched.avatar.trim()) ? matched.avatar : currentUser.avatar,
         };
         setCurrentUser(synced);
         try {
@@ -564,19 +739,20 @@ export default function App() {
 
   // --- Navigation & F5-Style Reload Handlers ---
 
-  const syncCoreDataFromMysql = useCallback(async () => {
+  const lastSyncTimestampRef = useRef<number>(Date.now());
+
+  const syncCoreDataFromMysql = useCallback(async (force = false) => {
     if (!mysqlConfig.enabled) return;
+    const now = Date.now();
+    if (!force && now - lastSyncTimestampRef.current < 25000) {
+      return;
+    }
+    lastSyncTimestampRef.current = now;
     try {
-      const activeUserId = currentUser ? currentUser.id : 'guest';
-      const [remoteComics, remoteTeams, remoteUsers, remoteComments, remoteSettings, remoteHist, remoteFollows, remoteFollowTeams] = await Promise.all([
-        fetchComicsFromMysql(mysqlConfig),
-        fetchTeamsFromMysql(mysqlConfig),
-        fetchUsersFromMysql(mysqlConfig),
-        fetchCommentsFromMysql(mysqlConfig),
-        fetchSiteSettingsFromMysql(mysqlConfig),
-        fetchReadingHistoryFromMysql(mysqlConfig, activeUserId),
-        fetchFollowedComicsFromMysql(mysqlConfig, activeUserId),
-        fetchFollowedTeamsFromMysql(mysqlConfig, activeUserId),
+      const [remoteComics, remoteTeams, remoteUsers] = await Promise.all([
+        fetchComicsFromMysql(mysqlConfig, force),
+        fetchTeamsFromMysql(mysqlConfig, force),
+        fetchUsersFromMysql(mysqlConfig, force),
       ]);
 
       if (remoteComics !== null && Array.isArray(remoteComics)) {
@@ -587,18 +763,31 @@ export default function App() {
         setComics((prevComics) => {
           const prevMap = new Map<string, Comic>(prevComics.map((pc) => [pc.id, pc]));
           const merged = normalizedComics.map((nc) => {
-            const existing = prevMap.get(nc.id);
+            const existing = prevMap.get(nc.id) || prevMap.get(nc.slug);
             if (!existing) return nc;
             const existingChapMap = new Map<string, Chapter>((existing.chapters || []).map((ch) => [ch.id, ch]));
+            const remoteChapIds = new Set((nc.chapters || []).map((ch) => ch.id));
+            const remoteChapNums = new Set((nc.chapters || []).map((ch) => Number(ch.chapterNumber)));
+
+            const mergedChapters = (nc.chapters || []).map((nch) => {
+              const exCh = existingChapMap.get(nch.id);
+              if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
+                return { ...nch, images: exCh.images };
+              }
+              return nch;
+            });
+
+            // Preserve locally added chapters that might not yet be in remote response
+            for (const exCh of (existing.chapters || [])) {
+              if (!remoteChapIds.has(exCh.id) && !remoteChapNums.has(Number(exCh.chapterNumber))) {
+                mergedChapters.push(exCh);
+              }
+            }
+            mergedChapters.sort((a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0));
+
             return {
               ...nc,
-              chapters: (nc.chapters || []).map((nch) => {
-                const exCh = existingChapMap.get(nch.id);
-                if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
-                  return { ...nch, images: exCh.images };
-                }
-                return nch;
-              }),
+              chapters: mergedChapters,
             };
           });
           saveComicsToCache(merged);
@@ -609,15 +798,27 @@ export default function App() {
           const fresh = normalizedComics.find((c) => c.id === currentSelected.id || c.slug === currentSelected.slug);
           if (!fresh) return currentSelected;
           const existingChapMap = new Map<string, Chapter>((currentSelected.chapters || []).map((ch) => [ch.id, ch]));
+          const remoteChapIds = new Set((fresh.chapters || []).map((ch) => ch.id));
+          const remoteChapNums = new Set((fresh.chapters || []).map((ch) => Number(ch.chapterNumber)));
+
+          const mergedChapters = (fresh.chapters || []).map((nch) => {
+            const exCh = existingChapMap.get(nch.id);
+            if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
+              return { ...nch, images: exCh.images };
+            }
+            return nch;
+          });
+
+          for (const exCh of (currentSelected.chapters || [])) {
+            if (!remoteChapIds.has(exCh.id) && !remoteChapNums.has(Number(exCh.chapterNumber))) {
+              mergedChapters.push(exCh);
+            }
+          }
+          mergedChapters.sort((a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0));
+
           return {
             ...fresh,
-            chapters: (fresh.chapters || []).map((nch) => {
-              const exCh = existingChapMap.get(nch.id);
-              if (exCh && Array.isArray(exCh.images) && exCh.images.length > 0 && (!nch.images || nch.images.length === 0)) {
-                return { ...nch, images: exCh.images };
-              }
-              return nch;
-            }),
+            chapters: mergedChapters,
           };
         });
       }
@@ -628,49 +829,48 @@ export default function App() {
 
       if (remoteUsers !== null && Array.isArray(remoteUsers) && remoteUsers.length > 0) {
         setUsers(remoteUsers);
-      }
-
-      if (remoteComments !== null && Array.isArray(remoteComments)) {
-        setComments(remoteComments);
-      }
-
-      if (remoteHist !== null && Array.isArray(remoteHist)) {
-        setReadingHistory(remoteHist);
-      }
-
-      if (remoteFollows !== null && Array.isArray(remoteFollows)) {
-        setFollowedComics(remoteFollows);
-      }
-
-      if (remoteFollowTeams !== null && Array.isArray(remoteFollowTeams)) {
-        setFollowedTeams(remoteFollowTeams);
-      }
-
-      if (remoteSettings && remoteSettings.imageServerConfig) {
-        setImageServerConfig(remoteSettings.imageServerConfig);
+        setCurrentUser((prevUser) => {
+          if (!prevUser) return null;
+          const fresh = remoteUsers.find((u) => {
+            if (u.id && prevUser.id && u.id === prevUser.id) return true;
+            const u1 = (prevUser.username || '').trim().toLowerCase().replace(/^@/, '');
+            const u2 = (u.username || '').trim().toLowerCase().replace(/^@/, '');
+            if (u1 && u2 && u1 === u2) return true;
+            const e1 = (prevUser.email || '').trim().toLowerCase();
+            const e2 = (u.email || '').trim().toLowerCase();
+            if (e1 && e2 && e1 === e2) return true;
+            return false;
+          });
+          if (fresh) {
+            const syncedUser: User = {
+              ...prevUser,
+              ...fresh,
+              avatar: (fresh.avatar && fresh.avatar.trim()) ? fresh.avatar : prevUser.avatar,
+              teamId: fresh.teamId !== undefined ? fresh.teamId : prevUser.teamId,
+              teamName: fresh.teamName !== undefined ? fresh.teamName : prevUser.teamName,
+              canUpload: fresh.role === 'ADMIN' || fresh.role === 'TEAM_LEADER' || !!fresh.canUpload,
+            };
+            try {
+              localStorage.setItem('leesincomic_current_user', JSON.stringify(syncedUser));
+            } catch (e) {}
+            return syncedUser;
+          }
+          return prevUser;
+        });
       }
     } catch (err) {
       console.warn('Lỗi đồng bộ dữ liệu SQL nền:', err);
     }
-  }, [mysqlConfig, currentUser]);
+  }, [mysqlConfig]);
 
-  // Periodic background data sync from MySQL across all devices every 20 seconds
-  useEffect(() => {
-    if (!mysqlConfig.enabled) return;
-    const interval = setInterval(() => {
-      syncCoreDataFromMysql();
-    }, 20000);
-    return () => clearInterval(interval);
-  }, [mysqlConfig.enabled, syncCoreDataFromMysql]);
-
-  const notifySqlDataChange = useCallback(() => {
+  const notifySqlDataChange = useCallback((extraPayload?: any) => {
     try {
       if (typeof BroadcastChannel !== 'undefined') {
         const ch = new BroadcastChannel('leesincomic_sql_data_channel');
-        ch.postMessage({ type: 'SQL_DATA_UPDATED', timestamp: Date.now() });
+        ch.postMessage({ type: 'SQL_DATA_UPDATED', timestamp: Date.now(), ...(extraPayload || {}) });
         ch.close();
       }
-      localStorage.setItem('leesincomic_sql_data_sync_ping', String(Date.now()));
+      localStorage.setItem('leesincomic_sql_data_sync_ping', JSON.stringify({ timestamp: Date.now(), ...(extraPayload || {}) }));
     } catch (e) {}
   }, []);
 
@@ -682,7 +882,25 @@ export default function App() {
         channel = new BroadcastChannel('leesincomic_sql_data_channel');
         channel.onmessage = (event) => {
           if (event.data?.type === 'SQL_DATA_UPDATED') {
-            syncCoreDataFromMysql();
+            if (event.data.userAvatar) {
+              const uId = event.data.userId;
+              const uUname = event.data.username;
+              setCurrentUser((prev) => {
+                if (!prev) return null;
+                const isMe =
+                  (uId && prev.id === uId) ||
+                  (uUname && prev.username && prev.username.toLowerCase().replace(/^@/, '') === uUname.toLowerCase().replace(/^@/, ''));
+                if (isMe) {
+                  const refreshed: User = { ...prev, avatar: event.data.userAvatar };
+                  try {
+                    localStorage.setItem('leesincomic_current_user', JSON.stringify(refreshed));
+                  } catch (e) {}
+                  return refreshed;
+                }
+                return prev;
+              });
+            }
+            syncCoreDataFromMysql(true);
           }
         };
       }
@@ -690,12 +908,31 @@ export default function App() {
 
     const handleStorageSync = (e: StorageEvent) => {
       if (e.key === 'leesincomic_sql_data_sync_ping') {
-        syncCoreDataFromMysql();
+        try {
+          const parsed = JSON.parse(e.newValue || '{}');
+          if (parsed.userAvatar) {
+            setCurrentUser((prev) => {
+              if (!prev) return null;
+              const isMe =
+                (parsed.userId && prev.id === parsed.userId) ||
+                (parsed.username && prev.username && prev.username.toLowerCase().replace(/^@/, '') === parsed.username.toLowerCase().replace(/^@/, ''));
+              if (isMe) {
+                const refreshed: User = { ...prev, avatar: parsed.userAvatar };
+                try {
+                  localStorage.setItem('leesincomic_current_user', JSON.stringify(refreshed));
+                } catch (err) {}
+                return refreshed;
+              }
+              return prev;
+            });
+          }
+        } catch (err) {}
+        syncCoreDataFromMysql(true);
       }
     };
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
-        syncCoreDataFromMysql();
+        syncCoreDataFromMysql(true);
       }
     };
 
@@ -703,11 +940,12 @@ export default function App() {
     window.addEventListener('focus', handleVisibilityOrFocus);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
+    // Polling định kỳ mỗi 12 giây để các thiết bị khác luôn thấy avatar và dữ liệu mới nhất
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        syncCoreDataFromMysql();
+        syncCoreDataFromMysql(false);
       }
-    }, 15000);
+    }, 12000);
 
     return () => {
       if (channel) channel.close();
@@ -771,10 +1009,17 @@ export default function App() {
         }
 
         if (remoteSettings) {
+          let parsedChapterAd = remoteSettings.chapterAd;
+          if (typeof parsedChapterAd === 'string') {
+            try { parsedChapterAd = JSON.parse(parsedChapterAd); } catch (e) {}
+          }
           setSiteSettings((prev) => {
             const updated = {
               ...prev,
               ...remoteSettings,
+              chapterAd: parsedChapterAd
+                ? { ...(prev.chapterAd || DEFAULT_CHAPTER_AD), ...parsedChapterAd }
+                : (prev.chapterAd || DEFAULT_CHAPTER_AD),
               logoUrl: remoteSettings.logoUrl ?? remoteSettings.logo_url ?? prev.logoUrl,
               faviconUrl: remoteSettings.faviconUrl ?? remoteSettings.favicon_url ?? prev.faviconUrl,
               logoHeight: remoteSettings.logoHeight !== undefined ? Number(remoteSettings.logoHeight) : (remoteSettings.logo_height !== undefined ? Number(remoteSettings.logo_height) : prev.logoHeight),
@@ -782,6 +1027,9 @@ export default function App() {
               footerLogoHeight: remoteSettings.footerLogoHeight !== undefined ? Number(remoteSettings.footerLogoHeight) : (remoteSettings.footer_logo_height !== undefined ? Number(remoteSettings.footer_logo_height) : prev.footerLogoHeight),
               logoScale: remoteSettings.logoScale !== undefined ? Number(remoteSettings.logoScale) : (remoteSettings.logo_scale !== undefined ? Number(remoteSettings.logo_scale) : prev.logoScale),
             };
+            try {
+              localStorage.setItem('leesincomic_site_settings', JSON.stringify(updated));
+            } catch (e) {}
             return updated;
           });
         }
@@ -800,6 +1048,32 @@ export default function App() {
 
         if (remoteUsers && Array.isArray(remoteUsers)) {
           setUsers(remoteUsers);
+          try {
+            localStorage.setItem('leesincomic_users', JSON.stringify(remoteUsers));
+          } catch (e) {}
+          if (savedUser) {
+            const fresh = remoteUsers.find((u) => {
+              if (u.id && savedUser.id && u.id === savedUser.id) return true;
+              const u1 = (savedUser.username || '').trim().toLowerCase().replace(/^@/, '');
+              const u2 = (u.username || '').trim().toLowerCase().replace(/^@/, '');
+              if (u1 && u2 && u1 === u2) return true;
+              const e1 = (savedUser.email || '').trim().toLowerCase();
+              const e2 = (u.email || '').trim().toLowerCase();
+              if (e1 && e2 && e1 === e2) return true;
+              return false;
+            });
+            if (fresh) {
+              const syncedUser: User = {
+                ...savedUser,
+                ...fresh,
+                avatar: (fresh.avatar && fresh.avatar.trim()) ? fresh.avatar : savedUser.avatar,
+              };
+              setCurrentUser(syncedUser);
+              try {
+                localStorage.setItem('leesincomic_current_user', JSON.stringify(syncedUser));
+              } catch (e) {}
+            }
+          }
         }
       } catch (err) {
         console.warn('Lỗi đồng bộ dữ liệu khi tải lại:', err);
@@ -982,14 +1256,16 @@ export default function App() {
     handleNavigateCategory('search', query, true, true);
   };
 
-  const handleSelectComic = async (comic: Comic, pushHistory = true, shouldSync = false) => {
+  const handleSelectComic = async (comic: Comic, pushHistory = true, shouldSync = false, shouldScrollTop = true) => {
     if (currentView !== 'comic-detail' && currentView !== 'reader') {
       setPreviousView(currentView);
     }
     setSelectedComic(comic);
     setActiveChapter(null);
     setCurrentView('comic-detail');
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (shouldScrollTop) {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
     const targetSlug = comic.slug || comic.id;
     if (pushHistory) {
       try {
@@ -1081,18 +1357,21 @@ export default function App() {
     });
   };
 
-  const handleReadChapter = async (chapter: Chapter, pushHistory = true) => {
+  const handleReadChapter = async (chapter: Chapter, pushHistory = true, shouldScrollTop = true) => {
     const targetComic = comics.find((c) => c.id === chapter.comicId) || selectedComic;
     if (targetComic) {
       setSelectedComic(targetComic);
     }
     setActiveChapter(chapter);
     setCurrentView('reader');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (shouldScrollTop) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
 
     // Record Reading History (both logged-in users and guests)
     if (targetComic) {
       const activeUserId = currentUser ? currentUser.id : 'guest';
+      const nowIso = new Date().toISOString();
       const historyItem: ReadingHistoryItem = {
         id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         userId: activeUserId,
@@ -1103,18 +1382,23 @@ export default function App() {
         chapterId: chapter.id,
         chapterNumber: chapter.chapterNumber,
         chapterTitle: chapter.title,
-        lastReadAt: 'Vừa xong',
+        readAt: nowIso,
+        lastReadAt: nowIso,
         teamName: chapter.teamName || targetComic.teamName,
       };
 
       setReadingHistory((prev) => {
         const filtered = prev.filter(
-          (h) => !(h.userId === activeUserId && h.comicId === targetComic.id)
+          (h) => !(h.comicId === targetComic.id && (h.userId === activeUserId || !h.userId))
         );
-        return [historyItem, ...filtered];
+        const updated = [historyItem, ...filtered];
+        try {
+          localStorage.setItem('leesincomic_reading_history', JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
       });
 
-      if (mysqlConfig.enabled) {
+      if (currentUser && mysqlConfig.enabled) {
         saveReadingHistoryToMysql(mysqlConfig, historyItem);
       }
     }
@@ -1554,17 +1838,30 @@ export default function App() {
 
   // --- Reading History Delete Handler ---
   const handleDeleteHistory = (historyId: string) => {
-    setReadingHistory((prev) => prev.filter((h) => h.id !== historyId));
+    setReadingHistory((prev) => {
+      const updated = prev.filter((h) => h.id !== historyId);
+      try {
+        localStorage.setItem('leesincomic_reading_history', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
     if (mysqlConfig.enabled) {
       deleteReadingHistoryFromMysql(mysqlConfig, historyId);
     }
   };
 
   const handleClearAllHistory = () => {
-    const activeUserId = currentUser ? currentUser.id : 'guest';
-    const toDelete = readingHistory.filter((h) => !h.userId || h.userId === activeUserId);
-    setReadingHistory((prev) => prev.filter((h) => h.userId && h.userId !== activeUserId));
-    if (mysqlConfig.enabled) {
+    setReadingHistory((prev) => {
+      const updated = currentUser
+        ? prev.filter((h) => h.userId !== currentUser.id && h.userId !== 'user-admin' && h.userId !== 'user-reader-vip' && h.userId !== 'guest')
+        : [];
+      try {
+        localStorage.setItem('leesincomic_reading_history', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+    if (currentUser && mysqlConfig.enabled) {
+      const toDelete = readingHistory.filter((h) => h.userId === currentUser.id);
       toDelete.forEach((h) => deleteReadingHistoryFromMysql(mysqlConfig, h.id));
     }
   };
@@ -1612,6 +1909,7 @@ export default function App() {
       generatedNotifications.push({
         id: `notif-${Date.now()}-reply-${Math.random().toString(36).slice(2, 6)}`,
         recipientUserId: commentData.replyToUserId,
+        recipientRole: 'READER',
         type: 'REPLY',
         title: 'Có người vừa trả lời bạn',
         content: `${currentUser.name} đã trả lời bình luận của bạn trong "${comicTitle}" (Chap ${chapNumber}): "${commentData.content}"`,
@@ -1621,26 +1919,41 @@ export default function App() {
         comicId: matchedComic?.id || commentData.comicId,
         comicTitle,
         comicSlug,
+        chapterId: commentData.chapterId,
         chapterNumber: chapNumber,
         commentId: newCommentId,
         parentCommentId: commentData.parentId,
         createdAt: new Date().toISOString(),
         isRead: false,
+        link: `/truyen/${comicSlug || matchedComic?.id || commentData.comicId}/chap-${chapNumber}#comment-${newCommentId}`,
       });
     }
 
     // 2. Translation Team Notification: Sent to the translation team managing this comic
     // (Ensure team leaders receive comment notifications on their comics)
+    const targetTeamObj = teams.find(
+      (t) => t.id === teamId || (t.name && t.name.toLowerCase().trim() === teamName.toLowerCase().trim())
+    );
+    const targetLeader = users.find(
+      (u) =>
+        (targetTeamObj?.leaderId && u.id === targetTeamObj.leaderId) ||
+        (u.teamId === teamId && (u.role === 'TEAM_LEADER' || u.role === 'ADMIN')) ||
+        (u.teamName && u.teamName.toLowerCase().trim() === teamName.toLowerCase().trim() && (u.role === 'TEAM_LEADER' || u.role === 'ADMIN'))
+    );
+    const leaderUserId = targetLeader?.id || targetTeamObj?.leaderId || matchedComic?.uploaderId;
+
     const isSelfTeam =
       currentUser.teamId === teamId ||
-      (currentUser.teamName && currentUser.teamName.toLowerCase() === teamName.toLowerCase());
+      (currentUser.teamName && currentUser.teamName.toLowerCase().trim() === teamName.toLowerCase().trim()) ||
+      (leaderUserId && currentUser.id === leaderUserId);
 
     if (!isSelfTeam || !commentData.replyToUserId) {
       generatedNotifications.push({
         id: `notif-${Date.now()}-team-${Math.random().toString(36).slice(2, 6)}`,
         recipientTeamId: teamId,
         recipientTeamName: teamName,
-        recipientUserId: matchedComic?.uploaderId,
+        recipientUserId: leaderUserId,
+        recipientRole: 'TEAM_LEADER',
         type: 'COMMENT',
         title: `Bình luận mới về truyện "${comicTitle}"`,
         content: `${currentUser.name} vừa bình luận truyện "${comicTitle}" (Chap ${chapNumber}): "${commentData.content}"`,
@@ -1650,17 +1963,43 @@ export default function App() {
         comicId: matchedComic?.id || commentData.comicId,
         comicTitle,
         comicSlug,
+        chapterId: commentData.chapterId,
         chapterNumber: chapNumber,
         commentId: newCommentId,
         createdAt: new Date().toISOString(),
         isRead: false,
+        link: `/truyen/${comicSlug || matchedComic?.id || commentData.comicId}/chap-${chapNumber}#comment-${newCommentId}`,
+      });
+    }
+
+    // 3. Admin Notification: Thông báo cho Ban Quản Trị hệ thống
+    if (currentUser.role !== 'ADMIN' && leaderUserId !== 'user-admin') {
+      generatedNotifications.push({
+        id: `notif-${Date.now()}-admin-${Math.random().toString(36).slice(2, 6)}`,
+        recipientRole: 'ADMIN',
+        recipientUserId: 'user-admin',
+        type: 'COMMENT',
+        title: `Bình luận mới trên truyện "${comicTitle}"`,
+        content: `${currentUser.name} vừa bình luận truyện "${comicTitle}" (Nhóm ${teamName}, Chap ${chapNumber}): "${commentData.content}"`,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        comicId: matchedComic?.id || commentData.comicId,
+        comicTitle,
+        comicSlug,
+        chapterId: commentData.chapterId,
+        chapterNumber: chapNumber,
+        commentId: newCommentId,
+        createdAt: new Date().toISOString(),
+        isRead: false,
+        link: `/truyen/${comicSlug || matchedComic?.id || commentData.comicId}/chap-${chapNumber}#comment-${newCommentId}`,
       });
     }
 
     if (generatedNotifications.length > 0) {
-      setNotifications((prev) => [...generatedNotifications, ...prev]);
       if (mysqlConfig.enabled) {
         Promise.all(generatedNotifications.map((notif) => saveNotificationToMysql(mysqlConfig, notif))).then(() => {
+          syncNotificationsFromBackend();
           notifyOtherTabsNotificationChange();
         });
       }
@@ -1744,7 +2083,12 @@ export default function App() {
   const handleSelectNotification = (notif: AppNotification) => {
     handleMarkNotificationAsRead(notif.id);
     const targetCommentId = notif.commentId || notif.parentCommentId || null;
-    setHighlightedCommentId(targetCommentId);
+    
+    // Reset first then set to guarantee re-triggering highlight scroll effect even if clicking same comment
+    setHighlightedCommentId(null);
+    setTimeout(() => {
+      setHighlightedCommentId(targetCommentId);
+    }, 60);
 
     if (notif.title === 'Yêu cầu cấp lại mật khẩu' || notif.title?.includes('cấp lại mật khẩu') || notif.link === '/admin') {
       if (currentUser?.role === 'ADMIN') {
@@ -1780,23 +2124,59 @@ export default function App() {
       }
     }
 
-    if (notif.comicSlug || notif.comicId) {
+    // Lookup comment in memory to resolve comic and chapter if not present in notification object
+    const targetComment = comments.find(
+      (c) =>
+        (targetCommentId && c.id === targetCommentId) ||
+        (notif.commentId && c.id === notif.commentId) ||
+        (notif.parentCommentId && c.id === notif.parentCommentId)
+    );
+
+    const comicId = (notif.comicId || targetComment?.comicId || '').trim();
+    const comicSlug = (notif.comicSlug || targetComment?.comicSlug || '').trim().toLowerCase();
+    const comicTitle = (notif.comicTitle || targetComment?.comicTitle || '').trim().toLowerCase();
+    const chapterId = notif.chapterId || targetComment?.chapterId;
+    const chapterNumber =
+      notif.chapterNumber !== undefined && notif.chapterNumber !== null
+        ? Number(notif.chapterNumber)
+        : targetComment?.chapterNumber !== undefined && targetComment?.chapterNumber !== null
+        ? Number(targetComment.chapterNumber)
+        : undefined;
+
+    if (comicSlug || comicId || comicTitle) {
+      const cleanId = comicId.toLowerCase();
+      const cleanWithoutPrefix = cleanId.replace(/^comic-/, '');
+
       const foundComic = comics.find(
         (c) =>
-          (notif.comicSlug && c.slug?.toLowerCase() === notif.comicSlug.toLowerCase()) ||
-          (notif.comicId && c.id === notif.comicId)
+          (comicSlug && (c.slug?.toLowerCase() === comicSlug || c.id.toLowerCase() === comicSlug)) ||
+          (cleanId &&
+            (c.id.toLowerCase() === cleanId ||
+              c.slug?.toLowerCase() === cleanId ||
+              c.id.toLowerCase().replace(/^comic-/, '') === cleanWithoutPrefix)) ||
+          (comicTitle && c.title.toLowerCase() === comicTitle)
       );
+
       if (foundComic) {
-        if (notif.chapterNumber !== undefined) {
-          const foundChap = foundComic.chapters.find(
-            (ch) => ch.chapterNumber === notif.chapterNumber
-          );
-          if (foundChap) {
-            handleReadChapter(foundChap);
-            return;
+        let foundChap: Chapter | undefined = undefined;
+        if (foundComic.chapters && foundComic.chapters.length > 0) {
+          if (chapterId) {
+            foundChap = foundComic.chapters.find((ch) => ch.id === chapterId);
+          }
+          if (!foundChap && chapterNumber !== undefined && !isNaN(chapterNumber)) {
+            foundChap = foundComic.chapters.find((ch) => Number(ch.chapterNumber) === chapterNumber);
           }
         }
-        handleSelectComic(foundComic);
+
+        if (foundChap) {
+          // Navigate to chapter reader without smooth scrolling to top so it can scroll directly to the comment
+          handleReadChapter(foundChap, true, false);
+          return;
+        }
+
+        // Navigate to comic detail without instant scrolling to top
+        handleSelectComic(foundComic, true, false, false);
+        return;
       }
     }
   };
@@ -2064,6 +2444,33 @@ export default function App() {
             }
           }
           handleSelectComic(foundComic, false, false);
+          if (mysqlConfig.enabled) {
+            fetchComicFromMysql(mysqlConfig, rawSlug).then((fresh) => {
+              if (fresh && fresh.chapters && fresh.chapters.length > (foundComic.chapters?.length || 0)) {
+                setSelectedComic(fresh);
+                setComics((prev) => prev.map((c) => (c.id === fresh.id || c.slug === fresh.slug ? fresh : c)));
+              }
+            });
+          }
+          return;
+        } else if (mysqlConfig.enabled) {
+          fetchComicFromMysql(mysqlConfig, rawSlug).then((fresh) => {
+            if (fresh) {
+              setComics((prev) => [fresh, ...prev.filter((c) => c.id !== fresh.id)]);
+              if (chapNum !== null) {
+                const foundChap = (fresh.chapters || []).find((ch) => ch.chapterNumber === chapNum);
+                if (foundChap) {
+                  setSelectedComic(fresh);
+                  setActiveChapter(foundChap);
+                  setCurrentView('reader');
+                  return;
+                }
+              }
+              handleSelectComic(fresh, false, false);
+            } else if (!initialRouteResolvedRef.current) {
+              handleNavigateHome(false, false);
+            }
+          });
           return;
         }
       }
@@ -2100,16 +2507,26 @@ export default function App() {
       updatedAt: (!newChapter.updatedAt || newChapter.updatedAt === 'Vừa xong') ? nowIso : newChapter.updatedAt,
     };
 
+    const cleanId = String(comicId || '').trim();
+    const withoutPrefix = cleanId.replace(/^comic-/, '');
+    const withPrefix = cleanId.startsWith('comic-') ? cleanId : `comic-${cleanId}`;
+
     setComics((prevComics) => {
       const otherComics: Comic[] = [];
       let updatedTarget: Comic | null = null;
 
       for (const c of prevComics) {
-        if (c.id === comicId) {
+        if (c.id === cleanId || c.slug === cleanId || c.id === withPrefix || c.slug === withoutPrefix) {
+          const existingChapters = (c.chapters || []).filter(
+            (ch) => ch.id !== normalizedNewChapter.id && Number(ch.chapterNumber) !== Number(normalizedNewChapter.chapterNumber)
+          );
+          const updatedChapters = [...existingChapters, normalizedNewChapter].sort(
+            (a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0)
+          );
           const updated = {
             ...c,
             updatedAt: nowIso,
-            chapters: [...(c.chapters || []), normalizedNewChapter],
+            chapters: updatedChapters,
           };
           updatedTarget = updated;
           comicToSave = updated;
@@ -2124,11 +2541,19 @@ export default function App() {
     });
 
     setSelectedComic((prev) => {
-      if (!prev || prev.id !== comicId) return prev;
+      if (!prev) return prev;
+      const isTarget = prev.id === cleanId || prev.slug === cleanId || prev.id === withPrefix || prev.slug === withoutPrefix;
+      if (!isTarget) return prev;
+      const existingChapters = (prev.chapters || []).filter(
+        (ch) => ch.id !== normalizedNewChapter.id && Number(ch.chapterNumber) !== Number(normalizedNewChapter.chapterNumber)
+      );
+      const updatedChapters = [...existingChapters, normalizedNewChapter].sort(
+        (a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0)
+      );
       return {
         ...prev,
         updatedAt: nowIso,
-        chapters: [...(prev.chapters || []), normalizedNewChapter],
+        chapters: updatedChapters,
       };
     });
 
@@ -2155,9 +2580,9 @@ export default function App() {
       saveChapterToMysql(mysqlConfig, normalizedNewChapter)
         .then(async (savedOk) => {
           if (!savedOk && comicToSave) {
-            await saveComicToMysql(mysqlConfig, comicToSave, false);
+            await saveComicToMysql(mysqlConfig, comicToSave, true);
           }
-          await syncCoreDataFromMysql();
+          await syncCoreDataFromMysql(true);
           notifySqlDataChange();
         })
         .catch((err) => console.warn('Lỗi lưu chapter MySQL:', err));
@@ -2171,7 +2596,7 @@ export default function App() {
 
       const newNotifs: AppNotification[] = [];
 
-      // Gửi thông báo cho từng độc giả đang theo dõi bộ truyện này
+      // Gửi thông báo chương mới cho độc giả theo dõi
       const comicFollowers = followedComics.filter((f) => f.comicId === comicId && f.userId && f.userId !== currentUser?.id);
       comicFollowers.forEach((f) => {
         newNotifs.push({
@@ -2190,8 +2615,27 @@ export default function App() {
           chapterNumber: chapNum,
           createdAt: new Date().toISOString(),
           isRead: false,
-          link: `/truyen-tranh/${comicSlug}/chap-${chapNum}`,
+          link: `/truyen/${comicSlug || comicId}/chap-${chapNum}`,
         });
+      });
+
+      // Thông báo chương mới cho toàn bộ độc giả
+      newNotifs.push({
+        id: `notif-chap-all-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        recipientRole: 'READER',
+        type: 'NEW_CHAPTER',
+        title: `Chương mới: ${comicTitle}`,
+        content: `Truyện "${comicTitle}" vừa ra mắt Chap ${chapNum} mới do ${teamName} đăng tải!`,
+        senderId: currentUser?.id || newChapter.teamId,
+        senderName: teamName,
+        senderAvatar: currentUser?.avatar || targetComic?.coverImage,
+        comicId,
+        comicTitle,
+        comicSlug,
+        chapterNumber: chapNum,
+        createdAt: new Date().toISOString(),
+        isRead: false,
+        link: `/truyen/${comicSlug || comicId}/chap-${chapNum}`,
       });
 
       // Thông báo cho Ban Quản Trị (Admin)
@@ -2199,6 +2643,7 @@ export default function App() {
         newNotifs.push({
           id: `notif-chap-admin-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           recipientRole: 'ADMIN',
+          recipientUserId: 'user-admin',
           type: 'NEW_CHAPTER',
           title: `Nhóm ${teamName} vừa cập nhật chương`,
           content: `${currentUser?.name || teamName} vừa đăng Chap ${chapNum} của truyện "${comicTitle}".`,
@@ -2211,6 +2656,7 @@ export default function App() {
           chapterNumber: chapNum,
           createdAt: new Date().toISOString(),
           isRead: false,
+          link: `/truyen/${comicSlug || comicId}/chap-${chapNum}`,
         });
       }
 
@@ -2225,27 +2671,45 @@ export default function App() {
 
   // Handler: Update an existing Chapter (Edit chapter title, number, password, images)
   const handleUpdateChapter = (comicId: string, updatedChapter: Chapter) => {
-    let comicToSave: Comic | null = null;
     const editIso = updatedChapter.updatedAt || new Date().toISOString();
-    let finalChapterToSave: Chapter = {
+    const cleanId = String(comicId || '').trim();
+    const withoutPrefix = cleanId.replace(/^comic-/, '');
+    const withPrefix = cleanId.startsWith('comic-') ? cleanId : `comic-${cleanId}`;
+
+    // Tìm truyện mục tiêu và chương hiện tại đồng bộ ngay từ đầu
+    const targetComic = comics.find(
+      (c) => c.id === cleanId || c.slug === cleanId || c.id === withPrefix || c.slug === withoutPrefix
+    );
+    const existingChap = targetComic?.chapters?.find(
+      (ch) => ch.id === updatedChapter.id || Number(ch.chapterNumber) === Number(updatedChapter.chapterNumber)
+    );
+
+    // Đảm bảo gán đầy đủ comicId, comicTitle và mảng images vào payload lưu
+    const finalChapterToSave: Chapter = {
       ...updatedChapter,
+      id: updatedChapter.id || existingChap?.id || `chap-${Date.now()}`,
+      comicId: cleanId || targetComic?.id || updatedChapter.comicId,
+      comicTitle: targetComic?.title || updatedChapter.comicTitle || '',
+      chapterNumber: Number(updatedChapter.chapterNumber) || 1,
+      images: Array.isArray(updatedChapter.images) ? updatedChapter.images : [],
+      createdAt: existingChap?.createdAt || updatedChapter.createdAt || editIso,
       updatedAt: editIso,
     };
 
+    let comicToSave: Comic | null = null;
+
     setComics((prevComics) => {
       const nextComics = prevComics.map((c) => {
-        if (c.id === comicId) {
-          const updatedChapters = (c.chapters || []).map((ch) => {
-            if (ch.id === updatedChapter.id) {
-              finalChapterToSave = {
-                ...updatedChapter,
-                createdAt: ch.createdAt || updatedChapter.createdAt,
-                updatedAt: editIso,
-              };
-              return finalChapterToSave;
-            }
-            return ch;
-          });
+        if (c.id === cleanId || c.slug === cleanId || c.id === withPrefix || c.slug === withoutPrefix) {
+          const existsById = (c.chapters || []).some((ch) => ch.id === finalChapterToSave.id);
+          const updatedChapters = (c.chapters || [])
+            .map((ch) => {
+              if (existsById ? ch.id === finalChapterToSave.id : Number(ch.chapterNumber) === Number(finalChapterToSave.chapterNumber)) {
+                return finalChapterToSave;
+              }
+              return ch;
+            })
+            .sort((a, b) => Number(a.chapterNumber) - Number(b.chapterNumber));
           const updatedComic = { ...c, chapters: updatedChapters, updatedAt: editIso };
           comicToSave = updatedComic;
           return updatedComic;
@@ -2259,27 +2723,33 @@ export default function App() {
 
     if (mysqlConfig.enabled) {
       saveChapterToMysql(mysqlConfig, finalChapterToSave)
-        .then(async () => {
-          await syncCoreDataFromMysql();
+        .then(async (savedOk) => {
+          if (!savedOk && (comicToSave || targetComic)) {
+            await saveComicToMysql(mysqlConfig, (comicToSave || targetComic)!, true);
+          }
+          await syncCoreDataFromMysql(true);
           notifySqlDataChange();
         })
-        .catch((err) => console.warn(err));
+        .catch((err) => console.warn('Lỗi lưu chapter sửa MySQL:', err));
     }
 
-    if (selectedComic && selectedComic.id === comicId) {
-      setSelectedComic((prev) =>
-        prev
-          ? {
-              ...prev,
-              updatedAt: editIso,
-              chapters: (prev.chapters || []).map((ch) =>
-                ch.id === updatedChapter.id
-                  ? { ...updatedChapter, createdAt: ch.createdAt || updatedChapter.createdAt, updatedAt: editIso }
-                  : ch
-              ),
-            }
-          : null
-      );
+    if (selectedComic && (selectedComic.id === cleanId || selectedComic.slug === cleanId || selectedComic.id === withPrefix || selectedComic.slug === withoutPrefix)) {
+      setSelectedComic((prev) => {
+        if (!prev) return null;
+        const existsById = (prev.chapters || []).some((ch) => ch.id === finalChapterToSave.id);
+        const updatedChapters = (prev.chapters || [])
+          .map((ch) =>
+            (existsById ? ch.id === finalChapterToSave.id : Number(ch.chapterNumber) === Number(finalChapterToSave.chapterNumber))
+              ? finalChapterToSave
+              : ch
+          )
+          .sort((a, b) => Number(a.chapterNumber) - Number(b.chapterNumber));
+        return {
+          ...prev,
+          updatedAt: editIso,
+          chapters: updatedChapters,
+        };
+      });
     }
   };
 
@@ -2581,11 +3051,13 @@ export default function App() {
 
     const isTeamOrAdmin = effectiveRole === 'TEAM_LEADER' || effectiveRole === 'ADMIN';
 
+    const cleanAvatar = (updatedData.avatar || '').trim() || currentUser.avatar;
+
     const updatedUser: User = {
       ...currentUser,
       ...latestUser,
-      name: updatedData.name,
-      avatar: updatedData.avatar,
+      name: updatedData.name.trim(),
+      avatar: cleanAvatar,
       role: effectiveRole,
       teamId: isTeamOrAdmin ? (effectiveTeamId || (effectiveRole === 'ADMIN' ? 'team-leesin' : `team-${currentUser.id}`)) : undefined,
       teamName: isTeamOrAdmin ? (newTeamName || (effectiveRole === 'ADMIN' ? 'Leesin Scans' : `${updatedData.name} Team`)) : undefined,
@@ -2626,7 +3098,7 @@ export default function App() {
             id: teamId,
             name: newTeamName,
             slug: toSlug(newTeamName),
-            avatar: updatedData.avatar || currentUser.avatar,
+            avatar: cleanAvatar,
             bio: `Nhóm dịch ${newTeamName}`,
             leaderId: currentUser.id,
             leaderName: updatedData.name || currentUser.name,
@@ -2655,8 +3127,23 @@ export default function App() {
       );
     }
 
+    if (cleanAvatar && cleanAvatar !== currentUser.avatar) {
+      setComments((prev) =>
+        prev.map((c) => (c.userId === currentUser.id ? { ...c, userAvatar: cleanAvatar } : c))
+      );
+    }
+
     if (mysqlConfig.enabled) {
-      saveUserToMysql(mysqlConfig, updatedUser);
+      saveUserToMysql(mysqlConfig, updatedUser)
+        .then(() => {
+          notifySqlDataChange({
+            userId: updatedUser.id,
+            username: updatedUser.username,
+            userAvatar: cleanAvatar,
+          });
+          syncCoreDataFromMysql(true);
+        })
+        .catch((err) => console.warn('Lỗi lưu user vào MySQL:', err));
     }
   };
 
@@ -2774,33 +3261,14 @@ export default function App() {
   };
 
   // Handler: Update Site Settings
-  const handleUpdateSiteSettings = (newSettings: SiteSettings) => {
+  const handleUpdateSiteSettings = (newSettings: SiteSettings, skipSaveToMysql: boolean = false) => {
     setSiteSettings(newSettings);
-    if (mysqlConfig.enabled) {
+    try {
+      localStorage.setItem('leesincomic_site_settings', JSON.stringify(newSettings));
+    } catch (e) {}
+    if (!skipSaveToMysql && mysqlConfig.enabled) {
       saveSiteSettingsToMysql(mysqlConfig, newSettings);
     }
-  };
-
-  const handleSetImageServerConfig = (cfg: ImageServerConfig) => {
-    setImageServerConfig(cfg);
-    setSiteSettings((prev) => {
-      const next = { ...prev, imageServerConfig: cfg };
-      if (mysqlConfig.enabled) {
-        saveSiteSettingsToMysql(mysqlConfig, next);
-      }
-      return next;
-    });
-  };
-
-  const handleSetMysqlConfig = (cfg: MysqlConfig) => {
-    setMysqlConfig(cfg);
-    setSiteSettings((prev) => {
-      const next = { ...prev, mysqlConfig: cfg };
-      if (cfg.enabled) {
-        saveSiteSettingsToMysql(cfg, next);
-      }
-      return next;
-    });
   };
 
   // Determine active team for portal
@@ -3009,10 +3477,13 @@ export default function App() {
               const c = comics.find((item) => item.id === comicId);
               if (c) handleSelectComic(c);
             }}
-            onReadChapter={(comicId, chapId) => {
-              const c = comics.find((item) => item.id === comicId);
+            onReadChapter={(comicId, chapId, chapNum) => {
+              const c = comics.find((item) => item.id === comicId || item.slug === comicId);
               if (c) {
-                const chap = c.chapters.find((ch) => ch.id === chapId);
+                const chap =
+                  c.chapters.find((ch) => ch.id === chapId) ||
+                  (chapNum !== undefined ? c.chapters.find((ch) => Number(ch.chapterNumber) === Number(chapNum)) : undefined) ||
+                  c.chapters[0];
                 if (chap) {
                   handleReadChapter(chap);
                 } else {
@@ -3194,9 +3665,9 @@ export default function App() {
               watermarkOpacity={watermarkOpacity}
               setWatermarkOpacity={setWatermarkOpacity}
               imageServerConfig={imageServerConfig}
-              setImageServerConfig={handleSetImageServerConfig}
+              setImageServerConfig={setImageServerConfig}
               mysqlConfig={mysqlConfig}
-              setMysqlConfig={handleSetMysqlConfig}
+              setMysqlConfig={setMysqlConfig}
               siteSettings={siteSettings}
               onUpdateSiteSettings={handleUpdateSiteSettings}
               onAddNewComic={handleAddNewComic}
@@ -3341,8 +3812,10 @@ export default function App() {
             try {
               localStorage.setItem('leesincomic_current_user', JSON.stringify(fresh));
             } catch (e) {}
+            syncNotificationsFromBackend(fresh);
           } else {
             setCurrentUser(null);
+            setNotifications([]);
             try {
               localStorage.removeItem('leesincomic_current_user');
             } catch (e) {}
@@ -3354,6 +3827,7 @@ export default function App() {
           try {
             localStorage.setItem('leesincomic_current_user', JSON.stringify(newUser));
           } catch (e) {}
+          syncNotificationsFromBackend(newUser);
         }}
         onResetPassword={handleResetPassword}
         onRequestPasswordReset={handleSendPasswordResetNotification}

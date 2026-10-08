@@ -501,7 +501,7 @@ export const CategoryView: React.FC<CategoryViewProps> = ({
                     {/* Hot & Trending & 18+ Badges */}
                     {pageType !== 'ranking' && (
                       <div className="absolute top-2 left-2 z-20 flex flex-col gap-1">
-                        {is18PlusComic(comic.genres) && (
+                        {is18PlusComic(comic) && (
                           <div className="px-2 py-0.5 rounded-md bg-gradient-to-r from-red-600 to-rose-700 text-white font-black text-[10px] flex items-center gap-0.5 shadow-md border border-red-400/30">
                             <span>🔞</span>
                             <span>18+</span>
@@ -532,6 +532,7 @@ export const CategoryView: React.FC<CategoryViewProps> = ({
                         alt={comic.title}
                         comicId={comic.id}
                         genres={comic.genres}
+                        is18Plus={comic.is18Plus}
                         className="w-full h-full"
                         imageClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { X, Save, AlertCircle, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { Comic, ScanTeam, ImageServerConfig } from '../types';
 import { ImageUploadField } from './ImageUploadField';
+import { toSlug } from '../utils/slug';
+import { is18PlusComic } from '../utils/adultFilter';
 
 interface TeamEditComicModalProps {
   isOpen: boolean;
@@ -31,6 +33,7 @@ export const TeamEditComicModal: React.FC<TeamEditComicModalProps> = ({
   const [bannerImage, setBannerImage] = useState(comic.bannerImage || '');
   const [isHot, setIsHot] = useState(!!comic.isHot);
   const [isTrending, setIsTrending] = useState(!!comic.isTrending);
+  const [is18Plus, setIs18Plus] = useState(comic.is18Plus !== undefined ? comic.is18Plus : is18PlusComic(comic));
   const [errorMsg, setErrorMsg] = useState('');
 
   if (!isOpen) return null;
@@ -42,19 +45,25 @@ export const TeamEditComicModal: React.FC<TeamEditComicModalProps> = ({
       return;
     }
 
+    const parsedGenres = genresStr.split(',').map((s) => s.trim()).filter(Boolean);
+    const finalGenres = is18Plus
+      ? (parsedGenres.some(g => g.toLowerCase() === '18+') ? parsedGenres : [...parsedGenres, '18+'])
+      : parsedGenres.filter(g => g.toLowerCase() !== '18+');
+
     const updated: Comic = {
       ...comic,
       title: title.trim(),
-      slug: slug.trim() || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, ''),
+      slug: toSlug(slug.trim() || title.trim()) || comic.slug,
       otherNames: otherNamesStr.split(',').map((s) => s.trim()).filter(Boolean),
       authors: authorsStr.split(',').map((s) => s.trim()).filter(Boolean),
-      genres: genresStr.split(',').map((s) => s.trim()).filter(Boolean),
+      genres: finalGenres,
       status,
       summary: summary.trim(),
       coverImage: coverImage.trim() || comic.coverImage,
       bannerImage: bannerImage.trim() || coverImage.trim() || comic.bannerImage,
       isHot: !!isHot,
-      isTrending: isAdmin ? !!isTrending : (comic.isTrending ?? false),
+      isTrending: isAdmin ? isTrending : !!comic.isTrending,
+      is18Plus: is18Plus,
       updatedAt: comic.updatedAt,
     };
 
@@ -207,6 +216,19 @@ export const TeamEditComicModal: React.FC<TeamEditComicModalProps> = ({
               <span className="flex items-center gap-1.5">
                 <span className="text-rose-400 font-bold">Gắn thẻ Truyện Hot 🔥</span>
                 <span className="text-[10px] text-slate-400 font-normal">(Hiển thị huy hiệu HOT trên trang chủ và mục Truyện Hot)</span>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={is18Plus}
+                onChange={(e) => setIs18Plus(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-red-500 focus:ring-red-500 cursor-pointer"
+              />
+              <span className="flex items-center gap-1.5">
+                <span className="text-red-400 font-bold">Gắn nhãn 18+ 🔞</span>
+                <span className="text-[10px] text-slate-400 font-normal">(Tự động che mờ ảnh bìa và cảnh báo độ tuổi)</span>
               </span>
             </label>
 

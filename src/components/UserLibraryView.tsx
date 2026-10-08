@@ -34,7 +34,7 @@ interface UserLibraryViewProps {
   allTeams?: ScanTeam[];
   allComics?: Comic[];
   onSelectComic: (comicId: string) => void;
-  onReadChapter: (comicId: string, chapterId: string) => void;
+  onReadChapter: (comicId: string, chapterId: string, chapterNumber?: number) => void;
   onDeleteHistory: (historyId: string) => void;
   onClearHistory: () => void;
   onUnfollowComic: (comicId: string) => void;
@@ -97,9 +97,18 @@ export const UserLibraryView: React.FC<UserLibraryViewProps> = ({
   };
 
   // Filter items strictly for the logged-in user if available (or include shared demo/admin items)
-  const userHistory = currentUser
-    ? historyItems.filter((h) => !h.userId || h.userId === currentUser.id || h.userId === 'user-reader-vip' || h.userId === 'user-admin' || h.userId === 'guest')
+  const rawUserHistory = currentUser
+    ? historyItems.filter((h) => !h.userId || h.userId === currentUser.id || h.userId === 'guest' || h.userId === 'user-reader-vip' || h.userId === 'user-admin')
     : historyItems;
+
+  // Deduplicate by comicId/slug so each comic shows only its most recently read chapter
+  const seenComicIds = new Set<string>();
+  const userHistory = rawUserHistory.filter((item) => {
+    const key = item.comicId || item.comicSlug || item.id;
+    if (seenComicIds.has(key)) return false;
+    seenComicIds.add(key);
+    return true;
+  });
 
   const userFollowed = currentUser
     ? followedItems.filter((f) => !f.userId || f.userId === currentUser.id || f.userId === 'user-reader-vip' || f.userId === 'user-admin')
@@ -111,9 +120,20 @@ export const UserLibraryView: React.FC<UserLibraryViewProps> = ({
 
   const totalFollowedCount = userFollowed.length + userFollowedTeams.length;
 
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr || dateStr === 'Vừa xong') return 'Vừa xong';
     try {
       const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+
+      const now = new Date();
+      const diffMs = now.getTime() - d.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      if (diffMins < 1) return 'Vừa xong';
+      if (diffMins < 60) return `${diffMins} phút trước`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24 && now.getDate() === d.getDate()) return `${diffHours} giờ trước`;
+
       return d.toLocaleDateString('vi-VN', {
         hour: '2-digit',
         minute: '2-digit',
@@ -301,79 +321,92 @@ export const UserLibraryView: React.FC<UserLibraryViewProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {userHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-3.5 flex gap-3.5 items-center justify-between group transition-all"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onSelectComic(item.comicId)}
-                    className="relative flex-shrink-0 w-16 h-20 rounded-xl overflow-hidden border border-slate-800 group-hover:border-amber-500/50 transition-colors"
+              {userHistory.map((item) => {
+                const matchedComic = allComics.find(
+                  (c) => c.id === item.comicId || (item.comicSlug && c.slug === item.comicSlug)
+                );
+                const displayTitle = item.comicTitle || matchedComic?.title || 'Truyện tranh';
+                const displayCover = item.coverImage || item.comicCover || matchedComic?.coverImage || '';
+                const displayGenres = matchedComic?.genres;
+                const displayChapter = item.chapterNumber ? `Chap ${item.chapterNumber}` : (item.chapterTitle || 'Chương mới');
+                const displayTime = formatDate(item.readAt || item.lastReadAt);
+ 
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-3.5 flex gap-3.5 items-center justify-between group transition-all"
                   >
-                    <CensoredCoverImage
-                      src={item.coverImage || item.comicCover || ''}
-                      alt={item.comicTitle}
-                      comicId={item.comicId}
-                      genres={allComics.find((c) => c.id === item.comicId)?.genres}
-                      size="xs"
-                      showBadge={false}
-                      className="w-full h-full"
-                      imageClassName="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    />
-                  </button>
-
-                  <div className="flex-1 min-w-0">
                     <button
                       type="button"
                       onClick={() => onSelectComic(item.comicId)}
-                      className="text-left font-bold text-sm text-white hover:text-amber-400 truncate block w-full transition-colors"
+                      className="relative flex-shrink-0 w-16 h-20 rounded-xl overflow-hidden border border-slate-800 group-hover:border-amber-500/50 transition-colors"
                     >
-                      {item.comicTitle}
+                      <CensoredCoverImage
+                        src={displayCover}
+                        alt={displayTitle}
+                        comicId={item.comicId}
+                        genres={displayGenres}
+                        is18Plus={matchedComic?.is18Plus}
+                        size="xs"
+                        showBadge={false}
+                        className="w-full h-full"
+                        imageClassName="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
                     </button>
-                    
-                    <p className="text-xs text-amber-400 font-medium mt-0.5">
-                      Đã đọc: <span className="font-bold">Chap {item.chapterNumber}</span>
-                    </p>
 
-                    <p className="text-[10px] text-slate-500 flex items-center gap-1 mt-1">
-                      <Clock className="w-3 h-3" />
-                      {formatDate(item.readAt || item.lastReadAt || '')}
-                    </p>
-
-                    <div className="flex items-center gap-2 mt-2">
+                    <div className="flex-1 min-w-0">
                       <button
                         type="button"
-                        onClick={() => onReadChapter(item.comicId, item.chapterId)}
-                        className="px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-rose-600 text-white font-bold text-[11px] hover:brightness-110 flex items-center gap-1 transition-all"
+                        onClick={() => onSelectComic(item.comicId)}
+                        className="text-left font-bold text-sm text-white hover:text-amber-400 truncate block w-full transition-colors"
+                        title={displayTitle}
                       >
-                        <BookOpen className="w-3 h-3" />
-                        <span>Đọc Tiếp</span>
+                        {displayTitle}
                       </button>
+                      
+                      <p className="text-xs text-amber-400 font-medium mt-0.5">
+                        Đã đọc: <span className="font-bold">{displayChapter}</span>
+                      </p>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConfirmModal({
-                            type: 'delete_history',
-                            id: item.id,
-                            name: item.comicTitle,
-                            extraInfo: item.chapterTitle ? `Chương: ${item.chapterTitle}` : undefined,
-                            title: 'Xóa Khỏi Lịch Sử Đọc?',
-                            description: `Bạn có chắc muốn xóa bản ghi lịch sử đọc của truyện "${item.comicTitle}" không?`,
-                            confirmLabel: 'Xác Nhận Xóa',
-                            dangerLevel: 'danger',
-                          });
-                        }}
-                        className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
-                        title="Xóa khỏi lịch sử"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <p className="text-[10px] text-slate-500 flex items-center gap-1 mt-1">
+                        <Clock className="w-3 h-3" />
+                        <span>{displayTime}</span>
+                      </p>
+
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => onReadChapter(item.comicId, item.chapterId, item.chapterNumber)}
+                          className="px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-rose-600 text-white font-bold text-[11px] hover:brightness-110 flex items-center gap-1 transition-all shadow-sm"
+                        >
+                          <BookOpen className="w-3 h-3" />
+                          <span>Đọc Tiếp</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmModal({
+                              type: 'delete_history',
+                              id: item.id,
+                              name: displayTitle,
+                              extraInfo: item.chapterTitle ? `Chương: ${item.chapterTitle}` : undefined,
+                              title: 'Xóa Khỏi Lịch Sử Đọc?',
+                              description: `Bạn có chắc muốn xóa bản ghi lịch sử đọc của truyện "${displayTitle}" không?`,
+                              confirmLabel: 'Xác Nhận Xóa',
+                              dangerLevel: 'danger',
+                            });
+                          }}
+                          className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                          title="Xóa khỏi lịch sử"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -664,6 +697,7 @@ export const UserLibraryView: React.FC<UserLibraryViewProps> = ({
                           alt={item.comicTitle}
                           comicId={item.comicId}
                           genres={allComics.find((c) => c.id === item.comicId)?.genres}
+                          is18Plus={allComics.find((c) => c.id === item.comicId)?.is18Plus}
                           size="md"
                           className="w-full h-full"
                           imageClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"

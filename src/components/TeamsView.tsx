@@ -321,6 +321,7 @@ export const TeamsView: React.FC<TeamsViewProps> = ({
                       alt={comic.title}
                       comicId={comic.id}
                       genres={comic.genres}
+                      is18Plus={comic.is18Plus}
                       size="md"
                       showBadge={false}
                       className="w-full h-full"
@@ -329,7 +330,7 @@ export const TeamsView: React.FC<TeamsViewProps> = ({
 
                     {/* Status & 18+ Badges */}
                     <div className="absolute top-2 left-2 flex flex-col gap-1 z-20">
-                      {is18PlusComic(comic.genres) && (
+                      {is18PlusComic(comic) && (
                         <span className="px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-extrabold uppercase shadow">
                           🔞 18+
                         </span>

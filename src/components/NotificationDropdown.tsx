@@ -97,103 +97,106 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
     }
   }, [replyingNotifId]);
 
-  // Lọc thông báo nghiêm ngặt theo đúng tài khoản người dùng:
-  // TUYỆT ĐỐI KHÔNG XEM CHUNG BÌNH LUẬN CỦA TRUYỆN THUỘC TÀI KHOẢN / NHÓM DỊCH KHÁC!
+  // Lọc thông báo nghiêm ngặt theo đúng tài khoản người dùng và nhóm dịch:
   const userNotifications = notifications.filter((n) => {
     if (!currentUser) return false;
 
-    // 1. Thông báo bình luận (COMMENT): CHỈ tài khoản/nhóm dịch sở hữu truyện đó mới được đọc!
-    if (n.type === 'COMMENT') {
-      const matchDirectUser = Boolean(
-        n.recipientUserId &&
-        (n.recipientUserId === currentUser.id ||
-          (currentUser.username && n.recipientUserId.toLowerCase() === currentUser.username.toLowerCase()) ||
-          (currentUser.email && n.recipientUserId.toLowerCase() === currentUser.email.toLowerCase()))
-      );
+    // 1. Quản trị viên (ADMIN): Nhận tất cả thông báo hệ thống, cấp pass, bình luận và chương mới của nền tảng
+    if (currentUser.role === 'ADMIN') {
+      return true;
+    }
 
+    // Không hiển thị thông báo về chính hành động của người dùng (tự bình luận thì không tự nhận chuông thông báo)
+    if (n.senderId && n.senderId === currentUser.id && n.type === 'COMMENT') {
+      return false;
+    }
+
+    // 2. Yêu cầu cấp lại mật khẩu: Chỉ Admin (đã xử lý ở bước 1, các role khác không thấy)
+    if (isResetRequest(n)) {
+      return false;
+    }
+
+    // 3. Thông báo gửi trực tiếp đích danh cho tài khoản này (khớp userId, username hoặc email)
+    const isDirectRecipient = Boolean(
+      n.recipientUserId &&
+      (n.recipientUserId === currentUser.id ||
+        (currentUser.username && n.recipientUserId.toLowerCase() === currentUser.username.toLowerCase()) ||
+        (currentUser.email && n.recipientUserId.toLowerCase() === currentUser.email.toLowerCase()) ||
+        (currentUser.name && n.recipientUserId.toLowerCase() === currentUser.name.toLowerCase()))
+    );
+
+    // Nếu thông báo gửi đích danh cho một tài khoản cụ thể khác, loại trừ ngay trừ khi là TEAM_LEADER quản lý truyện đó
+    if (n.recipientUserId && !isDirectRecipient) {
+      if (currentUser.role !== 'TEAM_LEADER') {
+        return false;
+      }
+    }
+
+    if (isDirectRecipient) {
+      return true;
+    }
+
+    // 4. Trưởng Nhóm Dịch (TEAM_LEADER):
+    if (currentUser.role === 'TEAM_LEADER') {
       const isLessinCurrentUser =
         (currentUser.teamId && (currentUser.teamId === 'team-lessin-comic' || currentUser.teamId === 'team-leesin')) ||
-        (currentUser.teamName && currentUser.teamName.toLowerCase().includes('lessin'));
+        (currentUser.teamName && (currentUser.teamName.toLowerCase().includes('lessin') || currentUser.teamName.toLowerCase().includes('leesin')));
 
       const isLessinNotif =
         (n.recipientTeamId && (n.recipientTeamId === 'team-lessin-comic' || n.recipientTeamId === 'team-leesin')) ||
-        (n.recipientTeamName && n.recipientTeamName.toLowerCase().includes('lessin'));
+        (n.recipientTeamName && (n.recipientTeamName.toLowerCase().includes('lessin') || n.recipientTeamName.toLowerCase().includes('leesin')));
 
-      let matchTeam = Boolean(
+      const matchTeam = Boolean(
         (n.recipientTeamId && currentUser.teamId && n.recipientTeamId === currentUser.teamId) ||
         (isLessinCurrentUser && isLessinNotif) ||
         (n.recipientTeamName && currentUser.teamName && n.recipientTeamName.toLowerCase().trim() === currentUser.teamName.toLowerCase().trim())
       );
 
-      // Đối soát trực tiếp với danh sách truyện để đảm bảo truyện thuộc sở hữu của tài khoản/nhóm dịch này
+      if (matchTeam) return true;
+
+      // Đối soát thêm với danh sách truyện của nhóm
       if (Array.isArray(comics) && comics.length > 0 && (n.comicId || n.comicSlug)) {
         const foundComic = comics.find((c) => c.id === n.comicId || c.slug === n.comicSlug || c.id === n.comicSlug);
         if (foundComic) {
           const isComicBelongsToUserTeam =
             (foundComic.teamId && currentUser.teamId && foundComic.teamId === currentUser.teamId) ||
-            (isLessinCurrentUser && (foundComic.teamId === 'team-lessin-comic' || foundComic.teamId === 'team-leesin' || foundComic.teamName?.toLowerCase().includes('lessin'))) ||
+            (isLessinCurrentUser && (foundComic.teamId === 'team-lessin-comic' || foundComic.teamId === 'team-leesin' || foundComic.teamName?.toLowerCase().includes('lessin') || foundComic.teamName?.toLowerCase().includes('leesin'))) ||
             (foundComic.teamName && currentUser.teamName && foundComic.teamName.toLowerCase().trim() === currentUser.teamName.toLowerCase().trim()) ||
             (foundComic.uploaderId && foundComic.uploaderId === currentUser.id);
 
-          if (!isComicBelongsToUserTeam) {
-            // Truyện này thuộc về nhóm khác hoặc tài khoản khác -> TUYỆT ĐỐI KHÔNG XEM CHUNG!
-            return false;
+          if (isComicBelongsToUserTeam) {
+            return true;
           }
-          matchTeam = matchTeam || Boolean(isComicBelongsToUserTeam);
         }
       }
 
-      return matchDirectUser || matchTeam;
-    }
-
-    // 2. Thông báo trả lời bình luận (REPLY): CHỈ người được trả lời mới nhận được
-    if (n.type === 'REPLY') {
-      return Boolean(
-        n.recipientUserId &&
-        (n.recipientUserId === currentUser.id ||
-          (currentUser.username && n.recipientUserId.toLowerCase() === currentUser.username.toLowerCase()) ||
-          (currentUser.email && n.recipientUserId.toLowerCase() === currentUser.email.toLowerCase()))
-      );
-    }
-
-    // 3. Yêu cầu cấp lại mật khẩu: Chỉ Admin
-    if (isResetRequest(n)) {
-      return currentUser.role === 'ADMIN';
-    }
-
-    // 4. Các thông báo hệ thống / cột mốc / thông báo chung khác
-    if (currentUser.role === 'ADMIN') {
-      return true;
-    }
-
-    if (currentUser.role === 'TEAM_LEADER') {
-      if (n.recipientRole === 'ALL' || n.recipientRole === 'TEAM_LEADER') return true;
-      if (
-        n.recipientUserId &&
-        (n.recipientUserId === currentUser.id ||
-          (currentUser.username && n.recipientUserId.toLowerCase() === currentUser.username.toLowerCase()) ||
-          (currentUser.email && n.recipientUserId.toLowerCase() === currentUser.email.toLowerCase()))
-      ) {
+      // Thông báo hệ thống chung gửi tới toàn bộ nhóm dịch (KHÔNG phải thông báo bình luận COMMENT/REPLY)
+      if (n.type === 'SYSTEM' && !n.recipientTeamId && !n.comicId && (n.recipientRole === 'ALL' || n.recipientRole === 'TEAM_LEADER')) {
         return true;
       }
-      if (n.recipientTeamId && currentUser.teamId && n.recipientTeamId === currentUser.teamId) return true;
-      if (
-        n.recipientTeamName &&
-        currentUser.teamName &&
-        n.recipientTeamName.toLowerCase().trim() === currentUser.teamName.toLowerCase().trim()
-      ) {
-        return true;
-      }
+
       return false;
     }
 
     // 5. Độc giả (READER):
-    if (n.recipientRole === 'ALL' || n.recipientRole === 'READER') return true;
-    return Boolean(
-      n.recipientUserId === currentUser.id ||
-      (currentUser.username && n.recipientUserId?.toLowerCase() === currentUser.username.toLowerCase()) ||
-      (currentUser.email && n.recipientUserId?.toLowerCase() === currentUser.email.toLowerCase())
-    );
+    if (currentUser.role === 'READER' || !currentUser.role) {
+      // Độc giả TUYỆT ĐỐI KHÔNG nhận thông báo bình luận truyện chung (COMMENT)
+      if (n.type === 'COMMENT') {
+        return false;
+      }
+
+      // Trả lời bình luận (REPLY): Đã xử lý ở isDirectRecipient phía trên. Nếu không gửi đích danh cho mình thì bỏ qua
+      if (n.type === 'REPLY') {
+        return false;
+      }
+
+      // Thông báo chương mới hoặc thông báo hệ thống chung cho toàn bộ độc giả (không có người nhận cụ thể)
+      if (!n.recipientUserId && (n.recipientRole === 'ALL' || n.recipientRole === 'READER')) {
+        return true;
+      }
+    }
+
+    return false;
   });
 
   const unreadCount = userNotifications.filter(isNotificationUnread).length;
@@ -261,10 +264,6 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
         id="btn-header-notification-bell"
         type="button"
         onClick={() => {
-          if (!currentUser) {
-            onOpenLogin();
-            return;
-          }
           setIsOpen(!isOpen);
         }}
         className={`relative p-2 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
@@ -289,11 +288,39 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
         )}
       </button>
 
+      {/* Unauthenticated Popover */}
+      {isOpen && !currentUser && (
+        <div
+          id="header-notification-popover-unauth"
+          className="fixed left-3 right-3 top-[68px] mx-auto max-w-[360px] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2.5 sm:mx-0 sm:w-[360px] sm:max-w-none bg-[#161a24] border border-slate-700/90 rounded-2xl shadow-2xl shadow-black/90 z-50 overflow-hidden flex flex-col p-5 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md text-center space-y-4"
+        >
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
+            <Bell className="w-6 h-6" />
+          </div>
+          <div>
+            <h4 className="font-bold text-white text-sm">Chưa Đăng Nhập</h4>
+            <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+              Vui lòng đăng nhập tài khoản để nhận thông báo thời gian thực khi có người bình luận, trả lời bình luận hoặc truyện bạn theo dõi có chương mới.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setIsOpen(false);
+              onOpenLogin();
+            }}
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <span>Đăng Nhập Ngay</span>
+          </button>
+        </div>
+      )}
+
       {/* Notification Popover Dropdown */}
       {isOpen && currentUser && (
         <div
           id="header-notification-popover"
-          className="absolute right-0 sm:-right-6 top-full mt-2.5 w-[340px] sm:w-[420px] max-w-[95vw] bg-[#161a24] border border-slate-700/90 rounded-2xl shadow-2xl shadow-black/90 z-50 overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
+          className="fixed left-2 right-2 top-[68px] mx-auto max-w-[420px] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2.5 sm:mx-0 sm:w-[420px] sm:max-w-none bg-[#161a24] border border-slate-700/90 rounded-2xl shadow-2xl shadow-black/90 z-50 overflow-hidden flex flex-col max-h-[calc(100vh-80px)] sm:max-h-[85vh] animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
         >
           {/* Header */}
           <div className="p-3.5 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between">
@@ -357,11 +384,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
           </div>
 
           {/* Filter Pills */}
-          <div className="px-3 py-2 bg-slate-950/70 border-b border-slate-800/80 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+          <div className="px-2 py-2 bg-slate-950/70 border-b border-slate-800/80 flex items-center gap-2 overflow-x-auto custom-scrollbar">
             <button
               type="button"
               onClick={() => setActiveFilter('all')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+              className={`px-1.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
                 activeFilter === 'all'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -373,7 +400,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveFilter('passwords')}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
                   activeFilter === 'passwords'
                     ? 'bg-gradient-to-r from-amber-500 to-rose-600 text-slate-950 font-black shadow-sm'
                     : pendingPassCount > 0
@@ -391,7 +418,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
             <button
               type="button"
               onClick={() => setActiveFilter('comments')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
                 activeFilter === 'comments'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -402,7 +429,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
             <button
               type="button"
               onClick={() => setActiveFilter('unread')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
                 activeFilter === 'unread'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -503,13 +530,15 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
                         </div>
 
                         {/* Comic & Chapter info */}
-                        {notif.comicTitle && (
-                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                            <span className="text-[11px] font-bold text-amber-300 truncate max-w-[170px]">
-                              {notif.comicTitle}
-                            </span>
-                            {notif.chapterNumber !== undefined && (
-                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold font-mono">
+                        {(notif.comicTitle || (notif.chapterNumber !== undefined && notif.chapterNumber !== null)) && (
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {notif.comicTitle && (
+                              <span className="text-[11px] font-bold text-amber-300 truncate max-w-[170px]">
+                                {notif.comicTitle}
+                              </span>
+                            )}
+                            {(notif.chapterNumber !== undefined && notif.chapterNumber !== null) && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold font-mono border border-amber-500/30">
                                 Chap {notif.chapterNumber}
                               </span>
                             )}
@@ -590,12 +619,15 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
                             {/* 2. Dẫn hướng đến bình luận đó luôn button */}
                             <button
                               type="button"
-                              onClick={() => handleNotificationClick(notif)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-sky-300 border border-slate-800 hover:border-sky-500/40 text-[11px] font-medium transition-all cursor-pointer"
-                              title="Chuyển đến trang đọc truyện và cuộn trực tiếp tới bình luận này"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNotificationClick(notif);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-amber-400 border border-slate-700/80 hover:border-amber-500/40 text-[11px] font-bold transition-all cursor-pointer shadow-sm"
+                              title="Chuyển đến truyện và cuộn trực tiếp tới bình luận này"
                             >
                               <span>Đến bình luận</span>
-                              <ArrowRight className="w-3 h-3" />
+                              <ArrowRight className="w-3 h-3 text-amber-400" />
                             </button>
                           </>
                         )}

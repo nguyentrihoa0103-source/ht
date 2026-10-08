@@ -73,7 +73,7 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
   backLabel,
 }) => {
   const [showSeoBox, setShowSeoBox] = useState(false);
-  const is18 = is18PlusComic(comic.genres);
+  const is18 = is18PlusComic(comic);
   const [isAdultRevealed, setIsAdultRevealed] = useState<boolean>(() => {
     if (!is18) return true;
     return isComicCoverRevealed(comic.id);
@@ -142,8 +142,8 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
     });
   }, [comic.chapters]);
 
-  const firstChapter = sortedChapters.length > 0 ? sortedChapters[sortedChapters.length - 1] : comic.chapters[0];
-  const latestChapter = sortedChapters.length > 0 ? sortedChapters[0] : comic.chapters[comic.chapters.length - 1];
+  const firstChapter = sortedChapters.length > 0 ? sortedChapters[sortedChapters.length - 1] : null;
+  const latestChapter = sortedChapters.length > 0 ? sortedChapters[0] : null;
 
   return (
     <div id="comic-detail-view" className="space-y-6 pb-20">
@@ -185,6 +185,8 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
                 alt={comic.title}
                 comicId={comic.id}
                 genres={comic.genres}
+                is18Plus={comic.is18Plus}
+                is18PlusOverride={is18}
                 size="detail"
                 showBadge={false}
                 className="w-full h-full"
@@ -317,7 +319,7 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
                   className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/30 transition-colors flex items-center gap-1"
                 >
                   <Sparkles className="w-3 h-3" />
-                  <span>Rank Math SEO Score: {comic.seo.score}/100</span>
+                  <span>Rank Math SEO Score: {comic.seo?.score ?? 95}/100</span>
                 </button>
               </div>
 
@@ -407,7 +409,7 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
               </div>
             </div>
             <div className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
-              Điểm SEO: {comic.seo.score} / 100 (Tốt)
+              Điểm SEO: {comic.seo?.score ?? 95} / 100 (Tốt)
             </div>
           </div>
 
@@ -422,10 +424,10 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
               href="#"
               className="text-base sm:text-lg font-medium text-sky-400 hover:underline block leading-snug"
             >
-              {comic.seo.metaTitle}
+              {comic.seo?.metaTitle || `${comic.title} Tiếng Việt Mới Nhất - Leesin Comic`}
             </a>
             <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
-              {comic.seo.metaDesc}
+              {comic.seo?.metaDesc || comic.summary || `Đọc truyện ${comic.title} bản dịch chất lượng cao.`}
             </p>
           </div>
 
@@ -433,11 +435,11 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
             <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-emerald-400">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>Từ khóa trọng tâm: "{comic.seo.focusKeyword}"</span>
+              <span>Từ khóa trọng tâm: "{comic.seo?.focusKeyword || comic.title}"</span>
             </div>
             <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-emerald-400">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>Schema: {comic.seo.schemaType} (Rich Snippet)</span>
+              <span>Schema: {comic.seo?.schemaType || 'ComicBook'} (Rich Snippet)</span>
             </div>
             <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-emerald-400">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -557,11 +559,12 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
           onRequireLogin={onRequireLogin}
           onNavigateToComic={() => {}}
           onNavigateToChapter={(slug, chapNum) => {
-            const chap = comic.chapters.find((c) => c.chapterNumber === chapNum);
+            const chap = comic.chapters.find((c) => Number(c.chapterNumber) === Number(chapNum));
             if (chap) handleChapterClick(chap);
           }}
           title={`Bình Luận Về Truyện "${comic.title}"`}
           comicFilter={comic.id}
+          currentComic={comic}
           showComicInfo={false}
           highlightedCommentId={highlightedCommentId}
         />

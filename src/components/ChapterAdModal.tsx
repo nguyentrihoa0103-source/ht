@@ -2,6 +2,14 @@ import React from 'react';
 import { X, ExternalLink, ShoppingBag, ShieldCheck } from 'lucide-react';
 import { ChapterAdConfig } from '../types';
 
+export const normalizeAdUrl = (url?: string): string => {
+  if (!url) return 'https://shopee.vn';
+  const trimmed = url.trim();
+  if (trimmed.toLowerCase().startsWith('javascript:')) return 'https://shopee.vn';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+};
+
 interface ChapterAdModalProps {
   ad: ChapterAdConfig;
   isOpen: boolean;
@@ -22,7 +30,7 @@ export const ChapterAdModal: React.FC<ChapterAdModalProps> = ({
   const handleConfirm = () => {
     onConfirm();
     if (!isPreview && ad.targetUrl) {
-      window.open(ad.targetUrl, '_blank', 'noopener,noreferrer');
+      window.open(normalizeAdUrl(ad.targetUrl), '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -183,7 +191,7 @@ export const ChapterInlineAdBanner: React.FC<ChapterInlineAdBannerProps> = ({
 
       {/* Action Button */}
       <a
-        href={ad.targetUrl || 'https://shopee.vn'}
+        href={normalizeAdUrl(ad.targetUrl)}
         target="_blank"
         rel="noopener noreferrer"
         className="mt-3.5 w-full py-2.5 px-4 rounded-xl bg-[#00b14f] hover:bg-[#009b45] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-[#00b14f]/25 transition-all text-center block"

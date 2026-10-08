@@ -4,10 +4,16 @@ import { Comic } from '../types';
  * Checks if a comic or genre list contains 18+ / Adult / R-18 indicators
  */
 export function is18PlusComic(
-  genresOrComic?: { genres?: string[] } | string[] | null
+  genresOrComic?: { genres?: string[]; is18Plus?: boolean } | string[] | null
 ): boolean {
   if (!genresOrComic) return false;
 
+  // 1. Ưu tiên kiểm tra trường boolean is18Plus nếu được thiết lập rõ ràng từ form đăng truyện
+  if (!Array.isArray(genresOrComic) && typeof genresOrComic.is18Plus === 'boolean') {
+    return genresOrComic.is18Plus;
+  }
+
+  // 2. Fallback cho dữ liệu cũ chưa có trường is18Plus: chỉ xét các tag chỉ định 18+ rõ ràng
   const genres: string[] = Array.isArray(genresOrComic)
     ? genresOrComic
     : genresOrComic.genres || [];

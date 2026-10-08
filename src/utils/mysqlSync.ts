@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS \`comics\` (
   \`rating_count\` INT DEFAULT 1,
   \`is_hot\` TINYINT(1) DEFAULT 0,
   \`is_trending\` TINYINT(1) DEFAULT 0,
+  \`is_18_plus\` TINYINT(1) DEFAULT 0,
   \`is_vip_only\` TINYINT(1) DEFAULT 0,
   \`seo_title\` VARCHAR(255) NULL,
   \`seo_desc\` TEXT NULL,
@@ -203,6 +204,7 @@ ALTER TABLE \`comics\`
   ADD COLUMN IF NOT EXISTS \`rating_count\` INT DEFAULT 1,
   ADD COLUMN IF NOT EXISTS \`is_hot\` TINYINT(1) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS \`is_trending\` TINYINT(1) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS \`is_18_plus\` TINYINT(1) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS \`is_vip_only\` TINYINT(1) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS \`seo_title\` VARCHAR(255) NULL,
   ADD COLUMN IF NOT EXISTS \`seo_desc\` TEXT NULL,
@@ -681,57 +683,61 @@ if ($action === 'get_comics' || $action === 'get_team_comics') {
             $params[] = $tId ?: $tName;
         }
 
-        $stmt = $pdo->prepare("SELECT c.* FROM comics c {$whereSql} ORDER BY c.id DESC");
+        $stmt = $pdo->prepare("
+            SELECT c.*,
+                COALESCE(
+                    (SELECT MAX(COALESCE(NULLIF(ch.updated_at, ''), ch.created_at)) FROM chapters ch WHERE ch.comic_id = c.id),
+                    NULLIF(c.updated_at, 'Vừa xong'),
+                    c.created_at
+                ) AS latest_chapter_update
+            FROM comics c
+            {$whereSql}
+            ORDER BY latest_chapter_update DESC, c.id DESC
+        ");
         $stmt->execute($params);
-        $rawComics = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        $comicIds = array_column($rawComics, 'id');
-        $chapsByComic = [];
-        if (!empty($comicIds)) {
-            $chunks = array_chunk($comicIds, 200);
-            foreach ($chunks as $chunk) {
-                if (empty($chunk)) continue;
-                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
-                $stmtChaps = $pdo->prepare("
-                    SELECT id, comic_id, chapter_number, title, is_password_protected, 
-                           scheduled_date, views, team_id, team_name, created_at, updated_at
-                    FROM chapters 
-                    WHERE comic_id IN ({$placeholders})
-                    ORDER BY chapter_number ASC
-                ");
-                $stmtChaps->execute($chunk);
-                $rawChaps = $stmtChaps->fetchAll(PDO::FETCH_ASSOC);
-                foreach ($rawChaps as $cRow) {
-                    $chapsByComic[$cRow['comic_id']][] = [
-                        'id' => $cRow['id'],
-                        'comicId' => $cRow['comic_id'],
-                        'comicTitle' => $cRow['title'] ?? '',
-                        'chapterNumber' => (float)$cRow['chapter_number'],
-                        'title' => $cRow['title'],
-                        'createdAt' => $cRow['created_at'],
-                        'updatedAt' => !empty($cRow['updated_at']) ? $cRow['updated_at'] : $cRow['created_at'],
-                        'scheduledDate' => $cRow['scheduled_date'],
-                        'isPasswordProtected' => (bool)$cRow['is_password_protected'],
-                        'views' => (int)($cRow['views'] ?? 0),
-                        'images' => [],
-                        'teamId' => $cRow['team_id'],
-                        'teamName' => $cRow['team_name']
-                    ];
-                }
-            }
-        }
+        $rawComics = $stmt->fetchAll();
 
         $comics = [];
         foreach ($rawComics as $row) {
-            $genres = json_decode($row['genres'] ?? '[]', true);
+            $comicId = $row['id'];
+            $stmtChaps = $pdo->prepare("SELECT * FROM chapters WHERE comic_id = ? ORDER BY chapter_number ASC");
+            $stmtChaps->execute([$comicId]);
+            $rawChaps = $stmtChaps->fetchAll();
+
+            $chapters = [];
+            $chapsTotalViews = 0;
+            foreach ($rawChaps as $cRow) {
+                $images = json_decode($cRow['images'], true);
+                if (!is_array($images)) $images = [];
+                $chapViews = (int)($cRow['views'] ?? 0);
+                $chapsTotalViews += $chapViews;
+                $chapters[] = [
+                    'id' => $cRow['id'],
+                    'comicId' => $cRow['comic_id'],
+                    'comicTitle' => $cRow['comic_title'],
+                    'chapterNumber' => (float)$cRow['chapter_number'],
+                    'title' => $cRow['title'],
+                    'createdAt' => $cRow['created_at'],
+                    'updatedAt' => !empty($cRow['updated_at']) ? $cRow['updated_at'] : $cRow['created_at'],
+                    'scheduledDate' => $cRow['scheduled_date'],
+                    'isPasswordProtected' => (bool)$cRow['is_password_protected'],
+                    'password' => $cRow['password'],
+                    'views' => $chapViews,
+                    'images' => $images,
+                    'teamId' => $cRow['team_id'],
+                    'teamName' => $cRow['team_name']
+                ];
+            }
+
+            $genres = json_decode($row['genres'], true);
             if (!is_array($genres)) $genres = [];
-            $authors = json_decode($row['authors'] ?? '[]', true);
+            $authors = json_decode($row['authors'], true);
             if (!is_array($authors)) $authors = [];
-            $otherNames = json_decode($row['other_names'] ?? '[]', true);
+            $otherNames = json_decode($row['other_names'], true);
             if (!is_array($otherNames)) $otherNames = [];
 
             $rowViews = (int)($row['views'] ?? 0);
-            $chapters = $chapsByComic[$row['id']] ?? [];
+            $effectiveComicViews = max($rowViews, $chapsTotalViews);
 
             $comics[] = [
                 'id' => $row['id'],
@@ -741,20 +747,21 @@ if ($action === 'get_comics' || $action === 'get_team_comics') {
                 'coverImage' => $row['cover_image'],
                 'bannerImage' => $row['banner_image'],
                 'authors' => $authors,
-                'status' => $row['status'] ?? 'Đang tiến hành',
+                'status' => $row['status'],
                 'genres' => $genres,
-                'summary' => $row['summary'] ?? '',
+                'summary' => $row['summary'],
                 'teamId' => $row['team_id'],
                 'teamName' => $row['team_name'],
-                'views' => $rowViews,
-                'likes' => (int)($row['likes'] ?? 0),
-                'follows' => (int)($row['follows'] ?? 0),
-                'rating' => (float)($row['rating'] ?? 5.0),
-                'ratingCount' => (int)($row['rating_count'] ?? 1),
-                'updatedAt' => $row['updated_at'] ?? $row['created_at'],
+                'views' => $effectiveComicViews,
+                'likes' => (int)$row['likes'],
+                'follows' => (int)$row['follows'],
+                'rating' => (float)$row['rating'],
+                'ratingCount' => (int)$row['rating_count'],
+                'updatedAt' => $row['latest_time'] ?? $row['updated_at'] ?? $row['created_at'],
                 'createdAt' => $row['created_at'] ?? null,
-                'isHot' => (bool)($row['is_hot'] ?? false),
-                'isTrending' => (bool)($row['is_trending'] ?? false),
+                'isHot' => (bool)$row['is_hot'],
+                'isTrending' => (bool)$row['is_trending'],
+                'is18Plus' => !empty($row['is_18_plus']),
                 'chapters' => $chapters,
                 'seo' => [
                     'focusKeyword' => $row['seo_keyword'] ?? $row['title'],
@@ -769,8 +776,9 @@ if ($action === 'get_comics' || $action === 'get_team_comics') {
         }
 
         echo json_encode(['success' => true, 'comics' => $comics]);
-    } catch (Throwable $e) {
-        echo json_encode(['success' => true, 'comics' => [], 'warning' => $e->getMessage()]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
     exit();
 }
@@ -1047,11 +1055,11 @@ if ($action === 'save_comic' || $action === 'update_comic' || $action === 'add_c
         $sql = "INSERT INTO comics (
             id, title, slug, other_names, cover_image, banner_image, authors,
             status, genres, summary, team_id, team_name, views, likes, follows,
-            rating, rating_count, is_hot, is_trending, seo_title, seo_desc, seo_keyword, updated_at
+            rating, rating_count, is_hot, is_trending, is_18_plus, seo_title, seo_desc, seo_keyword, updated_at
         ) VALUES (
             :id, :title, :slug, :other_names, :cover_image, :banner_image, :authors,
             :status, :genres, :summary, :team_id, :team_name, :views, :likes, :follows,
-            :rating, :rating_count, :is_hot, :is_trending, :seo_title, :seo_desc, :seo_keyword, :updated_at
+            :rating, :rating_count, :is_hot, :is_trending, :is_18_plus, :seo_title, :seo_desc, :seo_keyword, :updated_at
         ) ON DUPLICATE KEY UPDATE
             title = VALUES(title),
             slug = VALUES(slug),
@@ -1071,6 +1079,7 @@ if ($action === 'save_comic' || $action === 'update_comic' || $action === 'add_c
             rating_count = VALUES(rating_count),
             is_hot = VALUES(is_hot),
             is_trending = VALUES(is_trending),
+            is_18_plus = VALUES(is_18_plus),
             seo_title = VALUES(seo_title),
             seo_desc = VALUES(seo_desc),
             seo_keyword = VALUES(seo_keyword),
@@ -1097,6 +1106,7 @@ if ($action === 'save_comic' || $action === 'update_comic' || $action === 'add_c
             ':rating_count' => $input['ratingCount'] ?? 1,
             ':is_hot' => !empty($input['isHot']) ? 1 : 0,
             ':is_trending' => !empty($input['isTrending']) ? 1 : 0,
+            ':is_18_plus' => !empty($input['is18Plus']) || !empty($input['is_18_plus']) ? 1 : 0,
             ':seo_title' => $input['seo']['metaTitle'] ?? $input['title'],
             ':seo_desc' => $input['seo']['metaDesc'] ?? '',
             ':seo_keyword' => $input['seo']['focusKeyword'] ?? $input['title'],
@@ -1483,16 +1493,13 @@ if ($action === 'get_notifications') {
         $sql = "SELECT * FROM notifications WHERE 1=1";
         $params = [];
         if ($role === 'ADMIN') {
-            // Admin chỉ nhận thông báo hệ thống hoặc bình luận của truyện mình quản lý
-            $sql .= " AND (type != 'COMMENT' OR recipient_team_id = ? OR recipient_user_id = ?)";
-            $params[] = $teamId;
+            $sql .= " AND 1=1";
+        } else if ($role === 'TEAM_LEADER') {
+            $sql .= " AND (recipient_user_id = ? OR recipient_team_id = ? OR (type != 'COMMENT' AND type != 'REPLY' AND recipient_team_id IS NULL AND (recipient_role = 'ALL' OR recipient_role = 'TEAM_LEADER')))";
             $params[] = $userId;
-        } else if ($role === 'TEAM_LEADER' && $teamId) {
-            $sql .= " AND ((type != 'COMMENT' AND recipient_role = 'TEAM_LEADER') OR recipient_team_id = ? OR recipient_user_id = ?)";
             $params[] = $teamId;
-            $params[] = $userId;
         } else if ($userId) {
-            $sql .= " AND recipient_user_id = ?";
+            $sql .= " AND (recipient_user_id = ? OR (type != 'COMMENT' AND type != 'REPLY' AND recipient_user_id IS NULL AND (recipient_role = 'ALL' OR recipient_role = 'READER')))";
             $params[] = $userId;
         }
         $sql .= " ORDER BY created_at DESC LIMIT " . $limit;
@@ -1524,8 +1531,8 @@ if ($action === 'get_notifications') {
             ];
         }
         echo json_encode(['success' => true, 'notifications' => $notifs]);
-    } catch (Throwable $e) {
-        echo json_encode(['success' => true, 'notifications' => [], 'warning' => $e->getMessage()]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
     exit();
 }
@@ -2264,32 +2271,55 @@ export async function pingMysqlServer(config: MysqlConfig): Promise<{
   }
 }
 
+// Micro-cache & in-flight deduplication to make syncing instantaneous
+let activeComicsFetch: Promise<Comic[] | null> | null = null;
+let lastComicsCache: { time: number; data: Comic[] } | null = null;
+
+export function invalidateComicsCache() {
+  lastComicsCache = null;
+}
+
 /**
  * Sync / Fetch comics from MySQL database
  */
-export async function fetchComicsFromMysql(config: MysqlConfig): Promise<Comic[] | null> {
+export async function fetchComicsFromMysql(config: MysqlConfig, force: boolean = false): Promise<Comic[] | null> {
   if (!config.enabled) return null;
 
-  try {
-    const url = buildApiUrl(config.apiUrl, 'get_comics');
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': config.apiKey,
-        ...NO_CACHE_HEADERS,
-      },
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.success && Array.isArray(data.comics)) {
-      return data.comics;
-    }
-    return null;
-  } catch (err) {
-    console.warn('Lỗi lấy dữ liệu từ MySQL:', err);
-    return null;
+  const now = Date.now();
+  if (!force && lastComicsCache && (now - lastComicsCache.time < 15000)) {
+    return lastComicsCache.data;
   }
+  if (!force && activeComicsFetch) {
+    return activeComicsFetch;
+  }
+
+  activeComicsFetch = (async () => {
+    try {
+      const url = buildApiUrl(config.apiUrl, 'get_comics');
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': config.apiKey,
+          ...NO_CACHE_HEADERS,
+        },
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.success && Array.isArray(data.comics)) {
+        lastComicsCache = { time: Date.now(), data: data.comics };
+        return data.comics;
+      }
+      return null;
+    } catch (err) {
+      console.warn('Lỗi lấy dữ liệu từ MySQL:', err);
+      return null;
+    } finally {
+      activeComicsFetch = null;
+    }
+  })();
+
+  return activeComicsFetch;
 }
 
 /**
@@ -2335,6 +2365,8 @@ export async function saveComicToMysql(
       ratingCount: Number(comic.ratingCount) || 1,
       isHot: Boolean(comic.isHot),
       isTrending: Boolean(comic.isTrending),
+      is18Plus: Boolean(comic.is18Plus),
+      is_18_plus: comic.is18Plus ? 1 : 0,
       seo: comic.seo || {},
       updatedAt: comic.updatedAt || new Date().toISOString(),
     };
@@ -2366,6 +2398,7 @@ export async function saveComicToMysql(
       return false;
     }
 
+    invalidateComicsCache();
     return true;
   } catch (err) {
     console.error('Lỗi lưu truyện vào MySQL:', err);
@@ -2422,6 +2455,7 @@ export async function saveChapterToMysql(config: MysqlConfig, chapter: Chapter):
       return false;
     }
 
+    invalidateComicsCache();
     return true;
   } catch (err) {
     console.error('Lỗi lưu chương vào MySQL:', err);
@@ -2463,8 +2497,19 @@ export async function fetchComicFromMysql(config: MysqlConfig, comicIdOrSlug: st
     const data = await res.json();
     if (data && data.success && data.comic) {
       const c = data.comic;
+      const safeSeo = (c.seo && typeof c.seo === 'object' && c.seo.score) ? c.seo : {
+        focusKeyword: c.title,
+        metaTitle: `${c.title} Tiếng Việt Mới Nhất - Leesin Comic`,
+        metaDesc: c.summary || `Đọc truyện ${c.title} full tiếng việt, load ảnh siêu nhanh.`,
+        canonicalUrl: `https://leesincomic.com/truyen/${c.slug}`,
+        score: 95,
+        schemaType: 'ComicBook',
+        ...(c.seo || {})
+      };
       return {
         ...c,
+        is18Plus: c.is18Plus !== undefined ? Boolean(c.is18Plus) : Boolean(c.is_18_plus),
+        seo: safeSeo,
         views: typeof c.views === 'number' ? c.views : (parseInt(c.views, 10) || 0),
         chapters: Array.isArray(c.chapters)
           ? c.chapters.map((ch: any) => ({
@@ -2547,6 +2592,9 @@ export async function deleteChapterFromMysql(config: MysqlConfig, chapterId: str
     });
 
     const data = await res.json();
+    if (data.success) {
+      invalidateComicsCache();
+    }
     return !!data.success;
   } catch (err) {
     console.warn('Lỗi xóa chương khỏi MySQL:', err);
@@ -2572,6 +2620,9 @@ export async function deleteComicFromMysql(config: MysqlConfig, comicId: string)
     });
 
     const data = await res.json();
+    if (data.success) {
+      invalidateComicsCache();
+    }
     return !!data.success;
   } catch (err) {
     console.warn('Lỗi xóa truyện khỏi MySQL:', err);
@@ -3127,32 +3178,54 @@ export async function unfollowTeamToMysql(
   }
 }
 
+let activeUsersFetch: Promise<any[] | null> | null = null;
+let lastUsersCache: { time: number; data: any[] } | null = null;
+
+export function invalidateUsersCache() {
+  lastUsersCache = null;
+}
+
 /**
  * Fetch all users from MySQL
  */
-export async function fetchUsersFromMysql(config: MysqlConfig): Promise<any[] | null> {
+export async function fetchUsersFromMysql(config: MysqlConfig, force: boolean = false): Promise<any[] | null> {
   if (!config.enabled) return null;
 
-  try {
-    const url = buildApiUrl(config.apiUrl, 'get_users');
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': config.apiKey,
-        ...NO_CACHE_HEADERS,
-      },
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.success && Array.isArray(data.users)) {
-      return data.users;
-    }
-    return null;
-  } catch (err) {
-    console.warn('Lỗi lấy danh sách thành viên từ MySQL:', err);
-    return null;
+  const now = Date.now();
+  if (!force && lastUsersCache && (now - lastUsersCache.time < 15000)) {
+    return lastUsersCache.data;
   }
+  if (!force && activeUsersFetch) {
+    return activeUsersFetch;
+  }
+
+  activeUsersFetch = (async () => {
+    try {
+      const url = buildApiUrl(config.apiUrl, 'get_users');
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': config.apiKey,
+          ...NO_CACHE_HEADERS,
+        },
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.success && Array.isArray(data.users)) {
+        lastUsersCache = { time: Date.now(), data: data.users };
+        return data.users;
+      }
+      return null;
+    } catch (err) {
+      console.warn('Lỗi lấy danh sách thành viên từ MySQL:', err);
+      return null;
+    } finally {
+      activeUsersFetch = null;
+    }
+  })();
+
+  return activeUsersFetch;
 }
 
 /**
@@ -3246,6 +3319,9 @@ export async function saveUserToMysql(
     });
 
     const data = await res.json();
+    if (data && data.success) {
+      invalidateUsersCache();
+    }
     return !!data.success;
   } catch (err) {
     console.warn('Lỗi lưu thông tin tài khoản vào MySQL:', err);
@@ -3474,34 +3550,57 @@ export async function fetchSiteSettingsFromMysql(
   }
 }
 
+let activeTeamsFetch: Promise<ScanTeam[] | null> | null = null;
+let lastTeamsCache: { time: number; data: ScanTeam[] } | null = null;
+
+export function invalidateTeamsCache() {
+  lastTeamsCache = null;
+}
+
 /**
  * Fetch all teams from MySQL
  */
 export async function fetchTeamsFromMysql(
-  config: MysqlConfig
+  config: MysqlConfig,
+  force: boolean = false
 ): Promise<ScanTeam[] | null> {
   if (!config.enabled) return null;
 
-  try {
-    const url = buildApiUrl(config.apiUrl, 'get_teams');
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': config.apiKey,
-        ...NO_CACHE_HEADERS,
-      },
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.success && Array.isArray(data.teams)) {
-      return data.teams;
-    }
-    return null;
-  } catch (err) {
-    console.warn('Lỗi lấy nhóm dịch từ MySQL:', err);
-    return null;
+  const now = Date.now();
+  if (!force && lastTeamsCache && (now - lastTeamsCache.time < 15000)) {
+    return lastTeamsCache.data;
   }
+  if (!force && activeTeamsFetch) {
+    return activeTeamsFetch;
+  }
+
+  activeTeamsFetch = (async () => {
+    try {
+      const url = buildApiUrl(config.apiUrl, 'get_teams');
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': config.apiKey,
+          ...NO_CACHE_HEADERS,
+        },
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.success && Array.isArray(data.teams)) {
+        lastTeamsCache = { time: Date.now(), data: data.teams };
+        return data.teams;
+      }
+      return null;
+    } catch (err) {
+      console.warn('Lỗi lấy nhóm dịch từ MySQL:', err);
+      return null;
+    } finally {
+      activeTeamsFetch = null;
+    }
+  })();
+
+  return activeTeamsFetch;
 }
 
 /**
@@ -3637,6 +3736,3 @@ export async function autoImportDataToMysql(
     };
   }
 }
-
-
-
