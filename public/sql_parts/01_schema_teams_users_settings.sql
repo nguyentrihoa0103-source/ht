@@ -137,6 +137,7 @@ CREATE TABLE `chapters` (
   `team_id` VARCHAR(191) NULL,
   `team_name` VARCHAR(255) NULL,
   `created_at` VARCHAR(64) NULL,
+  `updated_at` VARCHAR(64) NULL,
   INDEX `idx_chap_comic` (`comic_id`),
   INDEX `idx_chap_num` (`comic_id`, `chapter_number`),
   INDEX `idx_chap_views` (`views`)
@@ -234,6 +235,8 @@ CREATE TABLE `notifications` (
   `id` VARCHAR(191) NOT NULL PRIMARY KEY,
   `recipient_user_id` VARCHAR(191) NULL,
   `recipient_team_id` VARCHAR(191) NULL,
+  `recipient_team_name` VARCHAR(255) NULL,
+  `recipient_role` VARCHAR(50) NULL,
   `type` VARCHAR(50) NOT NULL DEFAULT 'COMMENT',
   `title` VARCHAR(255) NOT NULL,
   `content` TEXT NOT NULL,
@@ -244,7 +247,10 @@ CREATE TABLE `notifications` (
   `comic_title` VARCHAR(255) NULL,
   `comic_slug` VARCHAR(191) NULL,
   `chapter_number` FLOAT NULL,
+  `comment_id` VARCHAR(191) NULL,
+  `parent_comment_id` VARCHAR(191) NULL,
   `is_read` TINYINT(1) DEFAULT 0,
+  `link` TEXT NULL,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX `idx_notif_user` (`recipient_user_id`),
   INDEX `idx_notif_team` (`recipient_team_id`)
