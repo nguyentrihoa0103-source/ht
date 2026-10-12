@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Chapter, ImageServerConfig } from '../types';
 import { processZipFile, processMultipleImageFiles } from '../utils/imageOptimizer';
-import { uploadImagesToTachServer } from '../utils/imageServerUploader';
+import { uploadImagesToTachServer, DEFAULT_IMAGE_SERVER_CONFIG } from '../utils/imageServerUploader';
 
 interface TeamEditChapterModalProps {
   isOpen: boolean;
@@ -155,7 +155,7 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
           opacity: watermarkOpacity,
           position: watermarkPosition || 'bottom-right',
           maxWidth: 2560,
-          quality: 0.96,
+          quality: 0.92,
           mode: 'logo',
         }
       );
@@ -194,7 +194,7 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
           opacity: watermarkOpacity,
           position: watermarkPosition || 'bottom-right',
           maxWidth: 2560,
-          quality: 0.96,
+          quality: 0.92,
           mode: 'logo',
         }
       );
@@ -234,7 +234,7 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
           opacity: watermarkOpacity,
           position: watermarkPosition || 'bottom-right',
           maxWidth: 2560,
-          quality: 0.96,
+          quality: 0.92,
           mode: 'logo',
         }
       );
@@ -270,11 +270,23 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
       return;
     }
 
+    if (isScheduled) {
+      if (!scheduledDate || !scheduledDate.trim()) {
+        setErrorMsg('Vui lòng chọn ngày và giờ muốn hẹn đăng chương!');
+        return;
+      }
+      const schedTime = new Date(scheduledDate).getTime();
+      if (isNaN(schedTime) || schedTime <= Date.now()) {
+        setErrorMsg('Thời gian hẹn giờ đăng chương phải ở mốc thời gian trong tương lai!');
+        return;
+      }
+    }
+
     let finalImages = images;
 
-    // Tự động đẩy ảnh base64 mới lên CDN nếu CDN đang kích hoạt
+    // Bắt buộc đẩy ảnh base64 mới lên CDN tachserver.site - không lưu Base64 vào database
     const hasBase64 = images.some((img) => img.startsWith('data:') || img.startsWith('blob:'));
-    if (hasBase64 && uploadToCdn && imageServerConfig?.enabled) {
+    if (hasBase64) {
       setIsProcessing(true);
       setStatusMessage('Đang tải ảnh mới lên CDN tachserver.site và xóa cache cũ...');
       setProcessProgress(10);
@@ -290,20 +302,25 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
           images,
           cleanSlug,
           chapterNumber,
-          imageServerConfig,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG,
           (percent) => setProcessProgress(percent)
         );
-        if (uploadRes.urls && uploadRes.urls.length > 0) {
+        if (uploadRes.urls && uploadRes.urls.length > 0 && uploadRes.isRealRemote) {
           finalImages = uploadRes.urls;
+        } else {
+          throw new Error(uploadRes.message || 'Không thể tải ảnh lên server CDN');
         }
       } catch (err: any) {
-        console.warn('Lỗi CDN khi lưu chương, dùng ảnh trực tiếp:', err);
+        setIsProcessing(false);
+        setErrorMsg(`Lỗi khi tải ảnh lên CDN: ${err?.message || 'Vui lòng kiểm tra lại kết nối mạng hoặc thử lại!'}`);
+        return; // Dừng lại, KHÔNG lưu Base64 vào database!
       } finally {
         setIsProcessing(false);
         setStatusMessage('');
       }
     }
 
+    const isChapScheduled = Boolean(isScheduled && scheduledDate && new Date(scheduledDate).getTime() > Date.now());
     const updated: Chapter = {
       ...chapter,
       chapterNumber: Number(chapterNumber),
@@ -312,7 +329,8 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
       updatedAt: new Date().toISOString(),
       isPasswordProtected,
       password: isPasswordProtected ? password.trim() : undefined,
-      scheduledDate: isScheduled && scheduledDate ? scheduledDate : undefined,
+      scheduledDate: isChapScheduled ? scheduledDate : undefined,
+      status: isChapScheduled ? 'SCHEDULED' : 'PUBLISHED',
       images: finalImages,
     };
 
@@ -562,28 +580,23 @@ export const TeamEditChapterModal: React.FC<TeamEditChapterModalProps> = ({
               </div>
             </div>
 
-            {/* CDN upload sync toggle */}
-            {imageServerConfig?.enabled && (
-              <div className="flex items-center justify-between p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                    <UploadCloud className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold text-white block">Tải ảnh mới lên CDN ({imageServerConfig.targetDomain})</span>
-                    <span className="text-[10px] text-slate-400 block">
-                      Tự động ghi đè tệp ảnh trên CDN tachserver.site và xóa cache trình duyệt để hiển thị ảnh mới tức thì
-                    </span>
-                  </div>
+            {/* CDN upload sync banner */}
+            <div className="flex items-center justify-between p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                  <UploadCloud className="w-4 h-4" />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={uploadToCdn}
-                  onChange={(e) => setUploadToCdn(e.target.checked)}
-                  className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
-                />
+                <div>
+                  <span className="text-xs font-bold text-white flex items-center gap-2">
+                    Tải ảnh mới lên CDN tachserver.site
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">Đang kích hoạt</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 block">
+                    Tự động lưu tệp ảnh trên CDN tachserver.site và xóa cache trình duyệt để hiển thị ảnh mới tức thì
+                  </span>
+                </div>
               </div>
-            )}
+            </div>
 
             {/* Watermark mode choice */}
             <div className="flex items-center justify-between p-3 bg-slate-900/60 rounded-xl border border-slate-800">

@@ -84,6 +84,7 @@ import {
   incrementComicViewInMysql,
 } from './utils/mysqlSync';
 import { getGmt7DateString, getGmt7MonthString } from './utils/viewTracking';
+import { isChapterScheduled, canUserAccessScheduledChapter } from './utils/timeAgo';
 
 // Helper to safely cache comic metadata without heavy chapter images arrays (prevents browser freezing and quota errors)
 // Note: updatedAt / createdAt are NEVER read from localStorage — SQL/API is the single source of truth for timestamps
@@ -103,7 +104,6 @@ declare const __APP_BUILD_ID__: string | undefined;
     const currentBuildId = typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : INITIAL_DATA_VERSION;
     const savedBuildId = localStorage.getItem('leesincomic_app_build_id');
     if (savedBuildId !== currentBuildId) {
-      console.log(`[CacheBuster] Phát hiện phiên bản build mới (${savedBuildId || 'none'} -> ${currentBuildId}). Dọn dẹp cache cũ...`);
       localStorage.removeItem('leesincomic_site_settings');
       localStorage.removeItem('leesincomic_users');
       localStorage.removeItem('leesincomic_comics');
@@ -119,7 +119,281 @@ declare const __APP_BUILD_ID__: string | undefined;
   }
 })();
 
+function getInitialRouteState() {
+  if (typeof window === 'undefined') {
+    return {
+      view: 'home' as const,
+      comic: null as Comic | null,
+      chapter: null as Chapter | null,
+      previousView: null as string | null,
+      team: null as ScanTeam | null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  let pathname = window.location.pathname;
+  if ((!pathname || pathname === '/' || pathname === '/index.html') && window.location.hash.startsWith('#/')) {
+    pathname = window.location.hash.replace('#', '');
+  }
+
+  // Bỏ hẳn đuôi .html khỏi router: chuẩn hóa ngay URL trên thanh địa chỉ
+  if (typeof window !== 'undefined' && pathname.includes('.html')) {
+    const cleanedPathname = pathname.replace(/\.html$/i, '').replace(/\.html(?=\/)/gi, '');
+    if (cleanedPathname !== pathname) {
+      pathname = cleanedPathname;
+      try {
+        window.history.replaceState(
+          window.history.state,
+          '',
+          pathname + (window.location.search || '') + (window.location.hash || '')
+        );
+      } catch (e) {}
+    }
+  }
+
+  const cleanPath = pathname.replace(/\/+$/, '') || '/';
+  const historyState = (window.history && window.history.state) || {};
+
+  // Router chuẩn không dùng đuôi .html: /truyen/:slug hoặc /truyen/:slug/chap-:num
+  const truyenMatch = cleanPath.match(/^\/(?:truyen|truyen-tranh)\/([^/]+?)(?:\/(?:chap|chuong|chapter)?-?(\d+))?$/i);
+  if (truyenMatch) {
+    const rawSlug = decodeURIComponent(truyenMatch[1]).replace(/\.html$/i, '').trim();
+    const chapNum = truyenMatch[2] ? parseInt(truyenMatch[2], 10) : null;
+    const lowerRaw = rawSlug.toLowerCase();
+
+    const foundComic = INITIAL_COMICS.find(
+      (c) =>
+        c.slug?.toLowerCase() === lowerRaw ||
+        c.id?.toLowerCase() === lowerRaw ||
+        c.id?.toLowerCase() === `comic-${lowerRaw}` ||
+        `comic-${c.slug?.toLowerCase()}` === lowerRaw
+    );
+
+    let restoredTeam: ScanTeam | null = null;
+    const targetTeamId = historyState.teamId || (historyState.previousView === 'teams' ? foundComic?.teamId : null);
+    if (targetTeamId) {
+      restoredTeam = INITIAL_TEAMS.find((t) => t.id === targetTeamId || t.slug === historyState.teamSlug) || null;
+    }
+
+    if (foundComic) {
+      let foundChap: Chapter | null = null;
+      if (chapNum !== null) {
+        foundChap = (foundComic.chapters || []).find((ch) => Number(ch.chapterNumber) === Number(chapNum)) || null;
+      }
+
+      return {
+        view: foundChap ? ('reader' as const) : ('comic-detail' as const),
+        comic: foundComic,
+        chapter: foundChap,
+        previousView: (historyState.previousView as string) || (historyState.fromTeam ? 'teams' : null),
+        team: restoredTeam,
+        categoryType: 'genre' as const,
+        categoryParam: 'Tất cả',
+        libraryTab: 'history' as const,
+      };
+    }
+
+    return {
+      view: chapNum !== null ? ('reader' as const) : ('comic-detail' as const),
+      comic: null,
+      chapter: null,
+      previousView: (historyState.previousView as string) || (historyState.fromTeam ? 'teams' : null),
+      team: restoredTeam,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  // Check team route: /nhom-dich/:idOrSlug
+  const teamMatch = cleanPath.match(/^\/nhom-dich(?:\/([^/]+?))?$/i);
+  if (teamMatch && teamMatch[1]) {
+    const rawTeam = decodeURIComponent(teamMatch[1]).replace(/\.html$/i, '').trim().toLowerCase();
+    if (rawTeam !== 'all') {
+      const foundTeam = INITIAL_TEAMS.find(
+        (t) =>
+          t.id?.toLowerCase() === rawTeam ||
+          t.slug?.toLowerCase() === rawTeam ||
+          toSlug(t.slug || '').toLowerCase() === rawTeam ||
+          toSlug(t.name || '').toLowerCase() === rawTeam ||
+          t.name?.toLowerCase() === rawTeam
+      );
+      return {
+        view: 'teams' as const,
+        comic: null,
+        chapter: null,
+        previousView: null,
+        team: foundTeam || null,
+        categoryType: 'genre' as const,
+        categoryParam: 'Tất cả',
+        libraryTab: 'history' as const,
+      };
+    }
+    return {
+      view: 'teams' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/nhom-dich-all' || cleanPath === '/nhom-dich') {
+    return {
+      view: 'teams' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/admin') {
+    return {
+      view: 'admin' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/team-portal' || cleanPath === '/portal-nhom-dich') {
+    return {
+      view: 'team-portal' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/lich-su') {
+    return {
+      view: 'library' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/theo-doi') {
+    return {
+      view: 'library' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: 'Tất cả',
+      libraryTab: 'following' as const,
+    };
+  }
+
+  if (cleanPath === '/hot' || cleanPath === '/truyen-hot') {
+    return {
+      view: 'category' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'hot' as const,
+      categoryParam: '',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/moi-cap-nhat') {
+    return {
+      view: 'category' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'latest' as const,
+      categoryParam: '',
+      libraryTab: 'history' as const,
+    };
+  }
+
+  const rankingMatch = cleanPath.match(/^\/xep-hang(?:\/([a-zA-Z0-9_-]+))?$/i);
+  if (rankingMatch) {
+    const tab = (rankingMatch[1] as 'day' | 'week' | 'month') || 'month';
+    return {
+      view: 'category' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'ranking' as const,
+      categoryParam: tab,
+      libraryTab: 'history' as const,
+    };
+  }
+
+  const genreMatch = cleanPath.match(/^\/the-loai(?:\/([a-zA-Z0-9_\u00C0-\u1EF9%-]+))?$/i);
+  if (genreMatch) {
+    const slug = genreMatch[1] ? decodeURIComponent(genreMatch[1]).toLowerCase() : 'tat-ca';
+    const mappedGenre = GENRE_SLUG_MAP[slug] || (slug === 'tat-ca' ? 'Tất cả' : slug.replace(/-/g, ' '));
+    return {
+      view: 'category' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'genre' as const,
+      categoryParam: mappedGenre,
+      libraryTab: 'history' as const,
+    };
+  }
+
+  if (cleanPath === '/tim-kiem') {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('q') || '';
+    return {
+      view: 'category' as const,
+      comic: null,
+      chapter: null,
+      previousView: null,
+      team: null,
+      categoryType: 'search' as const,
+      categoryParam: q,
+      libraryTab: 'history' as const,
+    };
+  }
+
+  return {
+    view: 'home' as const,
+    comic: null,
+    chapter: null,
+    previousView: null,
+    team: null,
+    categoryType: 'genre' as const,
+    categoryParam: 'Tất cả',
+    libraryTab: 'history' as const,
+  };
+}
+
 export default function App() {
+  const initialRoute = useRef(getInitialRouteState()).current;
   // MySQL Configuration (Enabled by default to connect to SQL database)
   const [mysqlConfig, setMysqlConfig] = useState<MysqlConfig>(() => {
     const saved = localStorage.getItem('leesincomic_mysql_config');
@@ -146,7 +420,16 @@ export default function App() {
     } catch (e) {}
     return INITIAL_COMICS;
   });
-  const [teams, setTeams] = useState<ScanTeam[]>(() => INITIAL_TEAMS);
+  const [teams, setTeams] = useState<ScanTeam[]>(() => {
+    try {
+      const saved = localStorage.getItem('leesincomic_teams');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_TEAMS;
+  });
   const [users, setUsers] = useState<User[]>(() => {
     try {
       const saved = localStorage.getItem('leesincomic_users');
@@ -160,7 +443,7 @@ export default function App() {
   const [comments, setComments] = useState<ChapterComment[]>(() => INITIAL_COMMENTS);
 
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
-  const [selectedTeamForView, setSelectedTeamForView] = useState<ScanTeam | null>(null);
+  const [selectedTeamForView, setSelectedTeamForView] = useState<ScanTeam | null>(() => initialRoute.team);
   const [adminInitialTab, setAdminInitialTab] = useState<'team-views' | 'manage-comics' | 'manage-users' | 'add-comic' | 'seo-rankmath' | 'watermark-settings' | 'cdn-server' | 'mysql-database' | 'site-settings' | 'footer-settings' | 'manage-comments' | 'ads-settings' | 'migrate-leesin' | 'notifications'>('manage-comics');
   const [adminResetTargetUser, setAdminResetTargetUser] = useState<User | null>(null);
 
@@ -368,19 +651,19 @@ export default function App() {
   // Navigation and Views
   const [currentView, setCurrentView] = useState<
     'home' | 'comic-detail' | 'reader' | 'admin' | 'team-portal' | 'category' | 'library' | 'teams'
-  >('home');
-  const [previousView, setPreviousView] = useState<string | null>(null);
-  const [selectedComic, setSelectedComic] = useState<Comic | null>(null);
-  const [activeChapter, setActiveChapter] = useState<Chapter | null>(null);
+  >(() => initialRoute.view);
+  const [previousView, setPreviousView] = useState<string | null>(() => initialRoute.previousView);
+  const [selectedComic, setSelectedComic] = useState<Comic | null>(() => initialRoute.comic);
+  const [activeChapter, setActiveChapter] = useState<Chapter | null>(() => initialRoute.chapter);
 
   // Category page parameters
   const [categoryPageType, setCategoryPageType] = useState<
     'genre' | 'hot' | 'ranking' | 'latest' | 'search'
-  >('genre');
-  const [categoryPageParam, setCategoryPageParam] = useState<string>('Tất cả');
+  >(() => initialRoute.categoryType);
+  const [categoryPageParam, setCategoryPageParam] = useState<string>(() => initialRoute.categoryParam);
 
   // Library page parameters ('history' | 'following')
-  const [libraryInitialTab, setLibraryInitialTab] = useState<'history' | 'following'>('history');
+  const [libraryInitialTab, setLibraryInitialTab] = useState<'history' | 'following'>(() => initialRoute.libraryTab);
 
   // Home filtering states (controlled from header)
   const [selectedGenre, setSelectedGenre] = useState<string>('Tất cả');
@@ -1044,6 +1327,9 @@ export default function App() {
 
         if (remoteTeams && Array.isArray(remoteTeams) && remoteTeams.length > 0) {
           setTeams(remoteTeams);
+          try {
+            localStorage.setItem('leesincomic_teams', JSON.stringify(remoteTeams));
+          } catch (e) {}
         }
 
         if (remoteUsers && Array.isArray(remoteUsers)) {
@@ -1257,6 +1543,7 @@ export default function App() {
   };
 
   const handleSelectComic = async (comic: Comic, pushHistory = true, shouldSync = false, shouldScrollTop = true) => {
+    const prev = currentView !== 'comic-detail' && currentView !== 'reader' ? currentView : previousView;
     if (currentView !== 'comic-detail' && currentView !== 'reader') {
       setPreviousView(currentView);
     }
@@ -1269,7 +1556,17 @@ export default function App() {
     const targetSlug = comic.slug || comic.id;
     if (pushHistory) {
       try {
-        window.history.pushState({ view: 'comic-detail', slug: targetSlug }, '', `/truyen/${targetSlug}`);
+        window.history.pushState(
+          {
+            view: 'comic-detail',
+            slug: targetSlug,
+            previousView: prev || (selectedTeamForView ? 'teams' : null),
+            teamId: selectedTeamForView?.id || comic.teamId || null,
+            teamSlug: selectedTeamForView?.slug || null,
+          },
+          '',
+          `/truyen/${targetSlug}`
+        );
       } catch (e) {
         console.warn(e);
       }
@@ -2301,6 +2598,21 @@ export default function App() {
         pathname = window.location.hash.replace('#', '');
       }
 
+      // Bỏ hẳn đuôi .html khỏi router: chuẩn hóa ngay URL trên thanh địa chỉ
+      if (pathname.includes('.html')) {
+        const cleanedPathname = pathname.replace(/\.html$/i, '').replace(/\.html(?=\/)/gi, '');
+        if (cleanedPathname !== pathname) {
+          pathname = cleanedPathname;
+          try {
+            window.history.replaceState(
+              window.history.state,
+              '',
+              pathname + (window.location.search || '') + (window.location.hash || '')
+            );
+          } catch (e) {}
+        }
+      }
+
       const cleanPath = pathname.replace(/\/+$/, '') || '/';
 
       if (cleanPath === '/' || cleanPath === '/index.html') {
@@ -2374,7 +2686,7 @@ export default function App() {
       // Match /nhom-dich/:idOrSlug
       const teamMatch = cleanPath.match(/^\/nhom-dich(?:\/([^/]+))?$/i);
       if (teamMatch && teamMatch[1]) {
-        const teamParam = decodeURIComponent(teamMatch[1]).trim();
+        const teamParam = decodeURIComponent(teamMatch[1]).replace(/\.html$/i, '').trim();
         if (teamParam.toLowerCase() === 'all') {
           handleNavigateTeams(null, false, false);
           return;
@@ -2416,19 +2728,24 @@ export default function App() {
         return;
       }
 
-      // Match /truyen/:slug or /truyen/:slug/chap-:num
-      const truyenMatch = cleanPath.match(/^\/truyen\/([^/]+)(?:\/(?:chap|chuong|chapter)?-?(\d+))?$/i);
+      // Router chuẩn không dùng đuôi .html: /truyen/:slug hoặc /truyen/:slug/chap-:num
+      const truyenMatch = cleanPath.match(/^\/(?:truyen|truyen-tranh)\/([^/]+?)(?:\/(?:chap|chuong|chapter)?-?(\d+))?$/i);
       if (truyenMatch) {
-        const rawSlug = decodeURIComponent(truyenMatch[1]);
+        const rawSlug = decodeURIComponent(truyenMatch[1]).replace(/\.html$/i, '').trim();
         const chapNum = truyenMatch[2] ? parseInt(truyenMatch[2], 10) : null;
+        const lowerRaw = rawSlug.toLowerCase();
 
         const foundComic = comicList.find(
-          (c) => c.slug?.toLowerCase() === rawSlug.toLowerCase() || c.id === rawSlug
+          (c) =>
+            c.slug?.toLowerCase() === lowerRaw ||
+            c.id?.toLowerCase() === lowerRaw ||
+            c.id?.toLowerCase() === `comic-${lowerRaw}` ||
+            `comic-${c.slug?.toLowerCase()}` === lowerRaw
         );
 
         if (foundComic) {
           if (chapNum !== null) {
-            const foundChap = (foundComic.chapters || []).find((ch) => ch.chapterNumber === chapNum);
+            const foundChap = (foundComic.chapters || []).find((ch) => Number(ch.chapterNumber) === Number(chapNum));
             if (foundChap) {
               setSelectedComic(foundComic);
               setActiveChapter(foundChap);
@@ -2442,6 +2759,14 @@ export default function App() {
               });
               return;
             }
+          }
+          if (window.history.state?.previousView) {
+            setPreviousView(window.history.state.previousView);
+          }
+          if (window.history.state?.teamId) {
+            const foundTeam = teamsRef.current.find((t) => t.id === window.history.state.teamId || t.slug === window.history.state.teamSlug) ||
+                              teams.find((t) => t.id === window.history.state.teamId || t.slug === window.history.state.teamSlug);
+            if (foundTeam) setSelectedTeamForView(foundTeam);
           }
           handleSelectComic(foundComic, false, false);
           if (mysqlConfig.enabled) {
@@ -2457,8 +2782,16 @@ export default function App() {
           fetchComicFromMysql(mysqlConfig, rawSlug).then((fresh) => {
             if (fresh) {
               setComics((prev) => [fresh, ...prev.filter((c) => c.id !== fresh.id)]);
+              if (window.history.state?.previousView) {
+                setPreviousView(window.history.state.previousView);
+              }
+              if (window.history.state?.teamId) {
+                const foundTeam = teamsRef.current.find((t) => t.id === window.history.state.teamId || t.slug === window.history.state.teamSlug) ||
+                                  teams.find((t) => t.id === window.history.state.teamId || t.slug === window.history.state.teamSlug);
+                if (foundTeam) setSelectedTeamForView(foundTeam);
+              }
               if (chapNum !== null) {
-                const foundChap = (fresh.chapters || []).find((ch) => ch.chapterNumber === chapNum);
+                const foundChap = (fresh.chapters || []).find((ch) => Number(ch.chapterNumber) === Number(chapNum));
                 if (foundChap) {
                   setSelectedComic(fresh);
                   setActiveChapter(foundChap);
@@ -2467,7 +2800,7 @@ export default function App() {
                 }
               }
               handleSelectComic(fresh, false, false);
-            } else if (!initialRouteResolvedRef.current) {
+            } else {
               handleNavigateHome(false, false);
             }
           });
@@ -2475,15 +2808,22 @@ export default function App() {
         }
       }
 
-      if (!initialRouteResolvedRef.current) {
+      if (!initialRouteResolvedRef.current && cleanPath !== '/') {
         handleNavigateHome(false, false);
       }
     };
+
+    const isComicRoute = /^\/(?:truyen|truyen-tranh)\//i.test(window.location.pathname);
+    const isTeamRoute = /^\/nhom-dich/i.test(window.location.pathname);
 
     // Chỉ tự động phân giải URL lần đầu khi load trang (hoặc khi danh sách truyện nạp xong)
     // Tuyệt đối không reset trang về Home mỗi khi có chapter mới được xuất bản!
     if (!initialRouteResolvedRef.current && (comics.length > 0 || window.location.pathname !== '/')) {
       initialRouteResolvedRef.current = true;
+      resolveCurrentRoute(comics);
+    } else if (isComicRoute && (!selectedComic || (comics.length > 0 && !comics.some((c) => c.id === selectedComic.id)))) {
+      resolveCurrentRoute(comics);
+    } else if (isTeamRoute && !selectedTeamForView && teams.length > 0) {
       resolveCurrentRoute(comics);
     }
 
@@ -2495,7 +2835,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', onPopState);
     };
-  }, [comics]);
+  }, [comics, teams]);
 
   // Handler: Add new chapter from Team Portal
   const handleAddChapter = (comicId: string, newChapter: Chapter) => {
@@ -3360,6 +3700,9 @@ export default function App() {
         };
         nextTeams = [...prevTeams, newTeamItem];
       }
+      try {
+        localStorage.setItem('leesincomic_teams', JSON.stringify(nextTeams));
+      } catch (e) {}
       return nextTeams;
     });
 
@@ -3536,7 +3879,8 @@ export default function App() {
               } else if (prev === 'admin') {
                 handleOpenAdmin(true);
               } else if (prev === 'teams') {
-                handleNavigateTeams(selectedTeamForView, true, false);
+                const targetTeam = selectedTeamForView || (selectedComic ? teams.find(t => t.id === selectedComic.teamId || t.name.toLowerCase() === (selectedComic.teamName || '').toLowerCase()) : null);
+                handleNavigateTeams(targetTeam || null, true, false);
               } else if (prev === 'category') {
                 handleNavigateCategory(categoryPageType, categoryPageParam, true, false);
               } else if (prev === 'library') {
@@ -3551,7 +3895,7 @@ export default function App() {
                 : previousView === 'admin'
                 ? 'Quay lại Bảng Quản Trị'
                 : previousView === 'teams'
-                ? (selectedTeamForView ? `Quay lại Nhóm ${selectedTeamForView.name}` : 'Quay lại Danh Sách Nhóm Dịch')
+                ? (selectedTeamForView ? `Quay lại Nhóm ${selectedTeamForView.name}` : (selectedComic?.teamName ? `Quay lại Nhóm ${selectedComic.teamName}` : 'Quay lại Danh Sách Nhóm Dịch'))
                 : previousView === 'category'
                 ? (categoryPageType === 'genre'
                     ? `Quay lại Thể Loại ${categoryPageParam}`
@@ -3582,6 +3926,12 @@ export default function App() {
             }}
             onSelectGenre={handleSelectGenre}
           />
+        )}
+        {currentView === 'comic-detail' && !selectedComic && (
+          <div className="py-32 flex flex-col items-center justify-center space-y-4">
+            <div className="w-10 h-10 border-4 border-amber-500/20 border-t-amber-500 rounded-full animate-spin" />
+            <p className="text-slate-400 text-sm font-medium">Đang tải thông tin truyện...</p>
+          </div>
         )}
 
         {/* VIEW 5: Manga Webtoon Reader */}

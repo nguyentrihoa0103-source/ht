@@ -53,6 +53,40 @@ export const TeamProfileEditModal: React.FC<TeamProfileEditModalProps> = ({
 
   if (!isOpen) return null;
 
+  // Helper nén ảnh bằng HTML5 Canvas: giới hạn kích thước tối đa 400x400px để ảnh luôn sắc nét và siêu nhẹ (~25-40KB)
+  const compressImage = (base64: string, maxDim = 400, quality = 0.88): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(base64);
+        }
+      };
+      img.onerror = () => resolve(base64);
+      img.src = base64;
+    });
+  };
+
   // Process QR Code Image File
   const processQrFile = async (file: File) => {
     if (!file) return;
@@ -78,34 +112,45 @@ export const TeamProfileEditModal: React.FC<TeamProfileEditModalProps> = ({
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
-      const base64Data = ev.target?.result as string;
-      if (!base64Data) {
+      const rawBase64 = ev.target?.result as string;
+      if (!rawBase64) {
         setIsUploadingQr(false);
         return;
       }
 
+      // Tự động nén qua Canvas: tối ưu dung lượng từ hàng MB xuống ~25-35KB, giữ nguyên độ nét quét mã
+      const optimizedBase64 = await compressImage(rawBase64, 400, 0.88);
+
       try {
         const res = await uploadSingleImageToTachServer(
-          base64Data,
+          optimizedBase64,
           'avatar',
           team.slug || team.id || 'qr-code',
           imageServerConfig
         );
-        setDonateQr(res.url);
-        setIsUploadingQr(false);
-        setQrUploadStatus({
-          success: true,
-          msg: res.isRealRemote
-            ? 'Đã tải ảnh mã QR lên máy chủ tachserver.site thành công!'
-            : 'Đã tải ảnh mã QR lên thành công!',
-        });
+        if (res.isRealRemote && res.url && !res.url.startsWith('data:')) {
+          setDonateQr(res.url);
+          setIsUploadingQr(false);
+          setQrUploadStatus({
+            success: true,
+            msg: 'Đã tải ảnh mã QR lên máy chủ CDN tachserver.site thành công!',
+          });
+        } else {
+          // CDN offline / chưa bật: lưu base64 đã nén tối ưu (<40KB) không làm lỗi database
+          setDonateQr(optimizedBase64);
+          setIsUploadingQr(false);
+          setQrUploadStatus({
+            success: true,
+            msg: 'Đã nén tối ưu ảnh QR (~30KB) và lưu thành công (Máy chủ CDN offline).',
+          });
+        }
         setTimeout(() => setQrUploadStatus(null), 4000);
       } catch (err: any) {
-        setDonateQr(base64Data);
+        setDonateQr(optimizedBase64);
         setIsUploadingQr(false);
         setQrUploadStatus({
           success: true,
-          msg: 'Đã tải ảnh mã QR thành công!',
+          msg: 'Đã nén tối ưu và lưu ảnh mã QR thành công!',
         });
         setTimeout(() => setQrUploadStatus(null), 4000);
       }
@@ -129,27 +174,36 @@ export const TeamProfileEditModal: React.FC<TeamProfileEditModalProps> = ({
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
-      const base64Data = ev.target?.result as string;
-      if (!base64Data) {
+      const rawBase64 = ev.target?.result as string;
+      if (!rawBase64) {
         setIsUploadingAvatar(false);
         return;
       }
+      const optimizedAvatar = await compressImage(rawBase64, 300, 0.85);
       try {
         const res = await uploadSingleImageToTachServer(
-          base64Data,
+          optimizedAvatar,
           'avatar',
           team.slug || team.id || 'avatar',
           imageServerConfig
         );
-        setAvatar(res.url);
+        if (res.isRealRemote && res.url && !res.url.startsWith('data:')) {
+          setAvatar(res.url);
+          setAvatarUploadStatus({
+            success: true,
+            msg: 'Đã tải ảnh đại diện lên CDN tachserver.site thành công!',
+          });
+        } else {
+          setAvatar(optimizedAvatar);
+          setAvatarUploadStatus({
+            success: true,
+            msg: 'Đã tải và lưu ảnh đại diện thành công!',
+          });
+        }
         setIsUploadingAvatar(false);
-        setAvatarUploadStatus({
-          success: true,
-          msg: 'Đã tải ảnh đại diện thành công!',
-        });
         setTimeout(() => setAvatarUploadStatus(null), 3000);
       } catch (err) {
-        setAvatar(base64Data);
+        setAvatar(optimizedAvatar);
         setIsUploadingAvatar(false);
       }
     };
@@ -624,4 +678,3 @@ export const TeamProfileEditModal: React.FC<TeamProfileEditModalProps> = ({
     </div>
   );
 };
-

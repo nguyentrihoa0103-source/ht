@@ -208,7 +208,7 @@ export function parseDateOrRelative(str?: string | null): number {
 export function getComicLatestTimestamp(comic: {
   updatedAt?: string;
   createdAt?: string;
-  chapters?: Array<{ chapterNumber?: number; createdAt?: string; updatedAt?: string; scheduledDate?: string }>;
+  chapters?: Array<{ chapterNumber?: number; createdAt?: string; updatedAt?: string; scheduledDate?: string; status?: string }>;
 }): number {
   if (!comic) return 0;
   let maxTime = parseDateOrRelative(comic.updatedAt) || parseDateOrRelative(comic.createdAt) || 0;
@@ -216,6 +216,8 @@ export function getComicLatestTimestamp(comic: {
   if (Array.isArray(comic.chapters) && comic.chapters.length > 0) {
     for (const ch of comic.chapters) {
       if (!ch) continue;
+      // Chương hẹn giờ chưa tới ngày phát hành không được đẩy truyện lên đầu với độc giả
+      if (isChapterScheduled(ch)) continue;
       const chTime = parseDateOrRelative(ch.updatedAt || ch.createdAt);
       if (chTime > maxTime) {
         maxTime = chTime;
@@ -224,6 +226,36 @@ export function getComicLatestTimestamp(comic: {
   }
 
   return maxTime;
+}
+
+/**
+ * Kiểm tra xem 1 chapter có đang bị hẹn giờ phát hành trong tương lai hay không.
+ */
+export function isChapterScheduled(chapter?: { scheduledDate?: string; status?: string } | null): boolean {
+  if (!chapter) return false;
+  if (!chapter.scheduledDate) return false;
+  const time = new Date(chapter.scheduledDate).getTime();
+  return !isNaN(time) && time > Date.now();
+}
+
+/**
+ * Kiểm tra xem người dùng hiện tại có quyền xem/đọc chapter đã hẹn giờ hay không:
+ * - Admin luôn có quyền xem.
+ * - Trưởng nhóm hoặc thành viên của nhóm dịch sở hữu chương đó có quyền xem.
+ * - Độc giả thông thường / khách thì KHÔNG được xem khi chương chưa tới giờ.
+ */
+export function canUserAccessScheduledChapter(
+  chapter?: { scheduledDate?: string; teamId?: string; teamName?: string; status?: string } | null,
+  user?: { role?: string; teamId?: string; teamName?: string } | null
+): boolean {
+  if (!chapter || !isChapterScheduled(chapter)) return true;
+  if (!user) return false;
+  if (user.role === 'ADMIN') return true;
+  if (user.role === 'TEAM_LEADER' || user.role === 'TEAM_MEMBER') {
+    if (user.teamId && chapter.teamId && user.teamId === chapter.teamId) return true;
+    if (user.teamName && chapter.teamName && user.teamName.toLowerCase().trim() === chapter.teamName.toLowerCase().trim()) return true;
+  }
+  return false;
 }
 
 /**

@@ -86,9 +86,9 @@ $savedUrls = [];
 // 3. Xử lý nhận ảnh đơn (cho ảnh bìa truyện hoặc avatar)
 if (!empty($_POST['single_base64'])) {
     $base64Data = $_POST['single_base64'];
-    if (preg_match('/^data:image\\/(\\w+);base64,/', $base64Data, $type)) {
+    if (preg_match('/^data:(?:image\/(\w+)|application\/octet-stream);base64,/', $base64Data, $type)) {
         $data = substr($base64Data, strpos($base64Data, ',') + 1);
-        $ext = strtolower($type[1]);
+        $ext = !empty($type[1]) ? strtolower($type[1]) : 'jpg';
         if ($ext === 'jpeg') $ext = 'jpg';
         $decoded = base64_decode($data);
         
@@ -116,9 +116,9 @@ elseif (!empty($_POST['base64_images'])) {
                 ? intval($index) + 1
                 : $startIndex + intval($index) + 1;
 
-            if (preg_match('/^data:image\\/(\\w+);base64,/', $base64Data, $type)) {
+            if (preg_match('/^data:(?:image\/(\w+)|application\/octet-stream);base64,/', $base64Data, $type)) {
                 $data = substr($base64Data, strpos($base64Data, ',') + 1);
-                $ext = strtolower($type[1]);
+                $ext = !empty($type[1]) ? strtolower($type[1]) : 'jpg';
                 if ($ext === 'jpeg') $ext = 'jpg';
                 $decoded = base64_decode($data);
                 
@@ -242,14 +242,16 @@ export const uploadImagesToTachServer = async (
   images: string[],
   comicSlug: string,
   chapterNumber: number,
-  config: ImageServerConfig,
+  config?: ImageServerConfig,
   onProgress?: (percent: number, current: number, total: number) => void
 ): Promise<{
   urls: string[];
   isRealRemote: boolean;
   message: string;
 }> => {
-  if (!config.enabled || !config.endpointUrl) {
+  const effectiveConfig = (config && config.endpointUrl) ? config : DEFAULT_IMAGE_SERVER_CONFIG;
+
+  if (!effectiveConfig.enabled || !effectiveConfig.endpointUrl) {
     return {
       urls: images,
       isRealRemote: false,
@@ -284,7 +286,7 @@ export const uploadImagesToTachServer = async (
           item.img,
           'chapter',
           comicSlug || 'comic',
-          config,
+          effectiveConfig,
           chapterNumber,
           item.idx
         );
@@ -303,12 +305,12 @@ export const uploadImagesToTachServer = async (
     return {
       urls: resultUrls,
       isRealRemote: true,
-      message: `Đã cập nhật ${processedCount} ảnh mới lên ${config.targetDomain}!`,
+      message: `Đã cập nhật ${processedCount} ảnh mới lên ${effectiveConfig.targetDomain}!`,
     };
   }
 
-  // Batch images into chunks to prevent payload too large errors
-  const CHUNK_SIZE = 8; // 8 images per request
+  // Batch images into smaller chunks of 2 to ensure lightweight payloads and prevent timeout errors
+  const CHUNK_SIZE = 2; // 2 images per request (~3-6MB payload) for fast, reliable upload
   const total = images.length;
   let allUploadedUrls: string[] = [];
   let isRealRemote = false;
@@ -332,39 +334,71 @@ export const uploadImagesToTachServer = async (
       });
 
       const formData = new FormData();
-      formData.append('api_key', config.apiKey);
+      formData.append('api_key', effectiveConfig.apiKey);
       formData.append('comic_slug', comicSlug || 'comic');
       formData.append('chapter_number', chapterNumber.toString());
       formData.append('start_index', i.toString());
       formData.append('chunk_offset', i.toString());
       formData.append('base64_images', JSON.stringify(indexedChunk));
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      // Thực hiện gửi dữ liệu với cơ chế Retry (tối đa 2 lần thử) & Timeout 90s
+      let chunkSuccess = false;
+      let lastError: Error | null = null;
+      const MAX_RETRIES = 2;
 
-      const response = await fetch(config.endpointUrl, {
-        method: 'POST',
-        headers: {
-          'X-API-KEY': config.apiKey,
-        },
-        body: formData,
-        signal: controller.signal,
-      });
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        const controller = new AbortController();
+        const timeoutMs = 90000; // 90 giây cho mỗi đợt 2 ảnh
+        const timeoutId = setTimeout(() => {
+          controller.abort(new Error(`Quá thời gian tải lên (Timeout ${timeoutMs / 1000}s). Đường truyền mạng quá chậm hoặc ảnh quá nặng!`));
+        }, timeoutMs);
 
-      clearTimeout(timeoutId);
+        try {
+          const response = await fetch(effectiveConfig.endpointUrl, {
+            method: 'POST',
+            headers: {
+              'X-API-KEY': effectiveConfig.apiKey,
+            },
+            body: formData,
+            signal: controller.signal,
+          });
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && Array.isArray(result.image_urls)) {
-          const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-          const batchUrls = [...result.image_urls].sort((a, b) => collator.compare(a, b));
-          allUploadedUrls = [...allUploadedUrls, ...batchUrls];
-          isRealRemote = true;
-        } else {
-          throw new Error(result.message || 'Lỗi từ tachserver.site');
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success && Array.isArray(result.image_urls)) {
+              const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+              const batchUrls = [...result.image_urls].sort((a, b) => collator.compare(a, b));
+              allUploadedUrls = [...allUploadedUrls, ...batchUrls];
+              isRealRemote = true;
+              chunkSuccess = true;
+              break;
+            } else {
+              throw new Error(result.message || 'Lỗi xử lý ảnh từ máy chủ CDN tachserver.site');
+            }
+          } else {
+            throw new Error(`Máy chủ CDN phản hồi HTTP ${response.status}: ${response.statusText}`);
+          }
+        } catch (fetchErr: any) {
+          clearTimeout(timeoutId);
+          const isAborted = fetchErr.name === 'AbortError' || controller.signal.aborted;
+          const abortReason = controller.signal.reason?.message;
+          const errorMsg = isAborted
+            ? (abortReason || 'Quá thời gian tải ảnh lên máy chủ CDN (Timeout sau 90 giây). Mạng yếu hoặc gói ảnh quá nặng!')
+            : (fetchErr.message || 'Lỗi mạng khi gửi ảnh lên CDN');
+
+          lastError = new Error(errorMsg);
+
+          if (attempt < MAX_RETRIES) {
+            console.warn(`Lần tải thứ ${attempt} cho trang ${i + 1}-${currentProcessed} gặp lỗi: ${errorMsg}. Đang tự động thử lại...`);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
         }
-      } else {
-        throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
+      }
+
+      if (!chunkSuccess) {
+        throw lastError || new Error(`Không thể tải lên đợt ảnh ${i + 1}-${currentProcessed} lên CDN sau ${MAX_RETRIES} lần thử.`);
       }
     }
 
@@ -383,18 +417,18 @@ export const uploadImagesToTachServer = async (
     return {
       urls: cacheBustedUrls,
       isRealRemote: true,
-      message: `Đã tải lên thành công ${cacheBustedUrls.length} ảnh sang ${config.targetDomain}!`,
+      message: `Đã tải lên thành công ${cacheBustedUrls.length} ảnh sang ${effectiveConfig.targetDomain}!`,
     };
   } catch (err: any) {
     console.warn('Lỗi khi gửi trực tiếp tới tachserver.site:', err.message);
 
     if (onProgress) onProgress(100, total, total);
 
-    // Fallback gracefully: return the actual processed images so the chapter is NOT broken
+    // Fallback: return message with exact error
     return {
       urls: images,
       isRealRemote: false,
-      message: `Đã lưu ảnh trực tiếp (CDN tachserver.site chưa kết nối: ${err.message || 'Cần đặt file upload.php trên server'}).`,
+      message: `Đã lưu ảnh trực tiếp (CDN tachserver.site chưa kết nối: ${err.message || 'Cần kiểm tra lại kết nối CDN'}).`,
     };
   }
 };
@@ -414,7 +448,9 @@ export const uploadSingleImageToTachServer = async (
   isRealRemote: boolean;
   message: string;
 }> => {
-  if (!config || !config.enabled || !config.endpointUrl) {
+  const effectiveConfig = (config && config.endpointUrl) ? config : DEFAULT_IMAGE_SERVER_CONFIG;
+
+  if (!effectiveConfig.enabled || !effectiveConfig.endpointUrl) {
     return {
       url: base64Data,
       isRealRemote: false,
@@ -424,7 +460,7 @@ export const uploadSingleImageToTachServer = async (
 
   try {
     const formData = new FormData();
-    formData.append('api_key', config.apiKey);
+    formData.append('api_key', effectiveConfig.apiKey);
     formData.append('upload_type', type);
     formData.append('comic_slug', identifier || 'cover');
     if (chapterNumber !== undefined) {
@@ -436,12 +472,15 @@ export const uploadSingleImageToTachServer = async (
     formData.append('single_base64', base64Data);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutMs = 60000; // 60s timeout for single image
+    const timeoutId = setTimeout(() => {
+      controller.abort(new Error(`Quá thời gian tải ảnh lên CDN (Timeout ${timeoutMs / 1000}s).`));
+    }, timeoutMs);
 
-    const response = await fetch(config.endpointUrl, {
+    const response = await fetch(effectiveConfig.endpointUrl, {
       method: 'POST',
       headers: {
-        'X-API-KEY': config.apiKey,
+        'X-API-KEY': effectiveConfig.apiKey,
       },
       body: formData,
       signal: controller.signal,
@@ -463,7 +502,9 @@ export const uploadSingleImageToTachServer = async (
       }
     }
   } catch (err: any) {
-    console.warn('Lỗi khi tải ảnh đơn lên tachserver.site:', err.message);
+    const isAborted = err.name === 'AbortError';
+    const msg = isAborted ? (err.message || 'Quá thời gian tải ảnh đơn (Timeout)') : err.message;
+    console.warn('Lỗi khi tải ảnh đơn lên tachserver.site:', msg);
   }
 
   // Fallback: If server endpoint isn't set up yet, keep the base64 or create cdn link

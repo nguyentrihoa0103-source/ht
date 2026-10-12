@@ -64,7 +64,9 @@ import { ScanTeam, Comic, Chapter, ImageServerConfig, User, UserRole, MysqlConfi
 import {
   UPLOAD_PHP_TEMPLATE,
   AAPANEL_CONFIG_GUIDE,
-  testPingImageServer
+  testPingImageServer,
+  uploadSingleImageToTachServer,
+  DEFAULT_IMAGE_SERVER_CONFIG
 } from '../utils/imageServerUploader';
 import {
   DEFAULT_MYSQL_CONFIG,
@@ -1310,13 +1312,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const assignedTeam = (teams && teams.find((t) => t.id === newComicTeamId)) || teams?.[0] || { id: 'team-leesin', name: 'Leesin Scans' };
       const generatedSlug = toSlug(newComicSlug.trim() || newComicTitle.trim()) || `comic-${Date.now()}`;
 
+      let finalCover = newComicCover.trim() || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80';
+      let finalBanner = newComicBanner.trim() || finalCover;
+
+      if (finalCover.startsWith('data:') || finalCover.startsWith('blob:')) {
+        const upCover = await uploadSingleImageToTachServer(
+          finalCover,
+          'cover',
+          generatedSlug,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
+        );
+        if (upCover.isRealRemote && upCover.url && !upCover.url.startsWith('data:') && !upCover.url.startsWith('blob:')) {
+          finalCover = upCover.url;
+        } else {
+          alert('Không thể tải ảnh bìa lên CDN tachserver.site. Vui lòng kiểm tra lại!');
+          setIsCreatingComic(false);
+          return;
+        }
+      }
+
+      if (finalBanner.startsWith('data:') || finalBanner.startsWith('blob:')) {
+        const upBanner = await uploadSingleImageToTachServer(
+          finalBanner,
+          'cover',
+          `${generatedSlug}-banner`,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
+        );
+        if (upBanner.isRealRemote && upBanner.url && !upBanner.url.startsWith('data:') && !upBanner.url.startsWith('blob:')) {
+          finalBanner = upBanner.url;
+        } else {
+          alert('Không thể tải ảnh banner lên CDN tachserver.site. Vui lòng kiểm tra lại!');
+          setIsCreatingComic(false);
+          return;
+        }
+      }
+
       const newComic: Comic = {
         id: `comic-${Date.now()}`,
         title: newComicTitle.trim(),
         slug: generatedSlug,
         otherNames: [],
-        coverImage: newComicCover.trim() || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
-        bannerImage: newComicBanner.trim() || newComicCover.trim(),
+        coverImage: finalCover,
+        bannerImage: finalBanner,
         authors: [newComicAuthor.trim() || 'Tác giả'],
         status: 'Đang tiến hành',
         genres: newComicGenres.split(',').map((g) => g.trim()).filter(Boolean),

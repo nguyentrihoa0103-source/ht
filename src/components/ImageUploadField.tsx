@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, Image as ImageIcon, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { uploadSingleImageToTachServer } from '../utils/imageServerUploader';
+import { uploadSingleImageToTachServer, DEFAULT_IMAGE_SERVER_CONFIG } from '../utils/imageServerUploader';
 import { ImageServerConfig } from '../types';
 
 interface ImageUploadFieldProps {
@@ -59,31 +59,32 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
       }
 
       try {
-        // Upload directly to tachserver.site if config enabled, or use base64 fallback
+        // Upload directly to tachserver.site CDN
         const res = await uploadSingleImageToTachServer(
           base64Data,
           type,
           slugOrId,
-          imageServerConfig
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
         );
 
-        onChange(res.url);
-        setIsUploading(false);
-        setUploadStatus({
-          success: true,
-          msg: res.isRealRemote
-            ? 'Đã tải ảnh lên Server tachserver.site thành công!'
-            : 'Đã tải ảnh lên thành công.',
-        });
+        if (res.isRealRemote && res.url && !res.url.startsWith('data:') && !res.url.startsWith('blob:')) {
+          onChange(res.url);
+          setIsUploading(false);
+          setUploadStatus({
+            success: true,
+            msg: 'Đã tải ảnh lên CDN tachserver.site thành công!',
+          });
+        } else {
+          throw new Error(res.message || 'Không thể upload ảnh lên CDN');
+        }
         setTimeout(() => setUploadStatus(null), 4000);
       } catch (err: any) {
-        onChange(base64Data);
         setIsUploading(false);
         setUploadStatus({
-          success: true,
-          msg: 'Đã tải ảnh lên thành công.',
+          success: false,
+          msg: `Lỗi tải ảnh lên CDN: ${err?.message || 'Vui lòng kiểm tra kết nối mạng!'}`,
         });
-        setTimeout(() => setUploadStatus(null), 4000);
+        setTimeout(() => setUploadStatus(null), 6000);
       }
     };
 

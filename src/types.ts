@@ -62,6 +62,7 @@ export interface Chapter {
   createdAt: string;
   updatedAt?: string;
   scheduledDate?: string; // If in the future, it's scheduled
+  status?: 'PUBLISHED' | 'DRAFT' | 'SCHEDULED';
   isPasswordProtected: boolean;
   password?: string;
   views: number;
@@ -427,4 +428,3 @@ export type AppRoute =
   | { type: 'admin'; tab?: string }
   | { type: 'team-portal' }
   | { type: 'search'; query: string };
-

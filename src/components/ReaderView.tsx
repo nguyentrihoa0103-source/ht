@@ -28,6 +28,7 @@ import { LiveCommentsFeed } from './LiveCommentsFeed';
 import { TeamDonationCard } from './TeamDonationCard';
 import { ChapterAdModal, ChapterInlineAdBanner } from './ChapterAdModal';
 import { getEffectiveChapterViews } from '../utils/viewTracking';
+import { isChapterScheduled, canUserAccessScheduledChapter } from '../utils/timeAgo';
 
 interface ReaderViewProps {
   comic: Comic;
@@ -408,9 +409,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [chapter.id, chapter.isPasswordProtected]);
 
-  const currentIndex = comic.chapters.findIndex((c) => c.id === chapter.id);
-  const prevChapter = currentIndex > 0 ? comic.chapters[currentIndex - 1] : null;
-  const nextChapter = currentIndex < comic.chapters.length - 1 ? comic.chapters[currentIndex + 1] : null;
+  // Lọc danh sách chương khả dụng đối với người dùng hiện tại (chặn chương hẹn giờ chưa phát hành)
+  const accessibleChapters = React.useMemo(() => {
+    return (comic.chapters || []).filter((c) => canUserAccessScheduledChapter(c, currentUser));
+  }, [comic.chapters, currentUser]);
+
+  const currentIndex = accessibleChapters.findIndex((c) => c.id === chapter.id);
+  const prevChapter = currentIndex > 0 ? accessibleChapters[currentIndex - 1] : null;
+  const nextChapter = currentIndex >= 0 && currentIndex < accessibleChapters.length - 1 ? accessibleChapters[currentIndex + 1] : null;
 
   const handleUnlockPassword = (e: React.FormEvent) => {
     e.preventDefault();
@@ -521,6 +527,51 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       }, secondDelayMs);
     }
   };
+
+  // Scheduled Chapter check: Chặn độc giả nếu chương đang hẹn giờ phát hành
+  const isScheduledLocked = isChapterScheduled(chapter) && !canUserAccessScheduledChapter(chapter, currentUser);
+  if (isScheduledLocked) {
+    const timeStr = chapter.scheduledDate
+      ? new Date(chapter.scheduledDate).toLocaleString('vi-VN')
+      : 'thời gian tới';
+    return (
+      <div id="reader-scheduled-prompt" className="min-h-[60vh] flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-[#141822] border border-sky-500/50 rounded-3xl p-8 text-center shadow-2xl space-y-5">
+          <div className="w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-400 flex items-center justify-center mx-auto animate-pulse">
+            <Clock className="w-8 h-8" />
+          </div>
+
+          <div>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase">
+              Chương Đang Hẹn Giờ Phát Hành
+            </span>
+            <h2 className="text-xl font-bold text-white mt-2">{chapter.title}</h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Nhóm dịch <strong className="text-sky-400">{chapter.teamName || 'Nhóm Dịch'}</strong> đã lên lịch hẹn giờ xuất bản chương này.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 space-y-1.5">
+            <div className="text-sky-300 font-semibold flex items-center justify-center gap-1.5">
+              <Clock className="w-4 h-4 text-sky-400" />
+              <span>Thời gian mở khóa tự động:</span>
+            </div>
+            <div className="text-base font-extrabold text-white font-mono">{timeStr}</div>
+            <p className="text-[11px] text-slate-400">Chương sẽ tự động hiển thị cho độc giả khi tới mốc thời gian trên.</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onBackToComic}
+            className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-colors flex items-center justify-center gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Quay Lại Danh Sách Chương</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Password Protected Chapter check
   if (chapter.isPasswordProtected && !isUnlocked) {
@@ -646,7 +697,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             }}
             className="bg-slate-900 border border-slate-700 text-slate-200 text-xs font-semibold py-2 px-3 rounded-xl focus:outline-none focus:border-amber-500"
           >
-            {comic.chapters.map((c) => {
+            {accessibleChapters.map((c) => {
               const displayLabel = c.title
                 ? (c.title.toLowerCase().startsWith('chap') || c.title.toLowerCase().startsWith('chương')
                     ? c.title
@@ -1065,7 +1116,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       {/* Hộp Nhỏ Đếm Ngược Thời Gian Tính View Bên Phải (Floating Right-Side View Countdown) */}
       <div
         id="reader-view-timer-floating"
-        className="fixed right-2.5 sm:right-5 top-1/2 -translate-y-1/2 z-40 pointer-events-auto select-none"
+        className="fixed bottom-6 left-4 sm:left-6 z-40 pointer-events-auto select-none"
       >
         {viewStatus === 'pending' ? (
           <div

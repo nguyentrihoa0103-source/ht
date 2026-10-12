@@ -700,15 +700,13 @@ if ($action === 'get_comics' || $action === 'get_team_comics') {
         $comics = [];
         foreach ($rawComics as $row) {
             $comicId = $row['id'];
-            $stmtChaps = $pdo->prepare("SELECT * FROM chapters WHERE comic_id = ? ORDER BY chapter_number ASC");
+            $stmtChaps = $pdo->prepare("SELECT id, comic_id, comic_title, chapter_number, title, created_at, updated_at, scheduled_date, is_password_protected, password, views, team_id, team_name FROM chapters WHERE comic_id = ? ORDER BY chapter_number ASC");
             $stmtChaps->execute([$comicId]);
             $rawChaps = $stmtChaps->fetchAll();
 
             $chapters = [];
             $chapsTotalViews = 0;
             foreach ($rawChaps as $cRow) {
-                $images = json_decode($cRow['images'], true);
-                if (!is_array($images)) $images = [];
                 $chapViews = (int)($cRow['views'] ?? 0);
                 $chapsTotalViews += $chapViews;
                 $chapters[] = [
@@ -723,7 +721,7 @@ if ($action === 'get_comics' || $action === 'get_team_comics') {
                     'isPasswordProtected' => (bool)$cRow['is_password_protected'],
                     'password' => $cRow['password'],
                     'views' => $chapViews,
-                    'images' => $images,
+                    'images' => [],
                     'teamId' => $cRow['team_id'],
                     'teamName' => $cRow['team_name']
                 ];

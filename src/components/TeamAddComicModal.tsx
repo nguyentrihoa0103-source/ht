@@ -3,6 +3,7 @@ import { BookPlus, PlusCircle, CheckCircle2, Shield, Loader2 } from 'lucide-reac
 import { Comic, ScanTeam, ImageServerConfig } from '../types';
 import { ImageUploadField } from './ImageUploadField';
 import { toSlug } from '../utils/slug';
+import { uploadSingleImageToTachServer, DEFAULT_IMAGE_SERVER_CONFIG } from '../utils/imageServerUploader';
 
 interface TeamAddComicModalProps {
   isOpen: boolean;
@@ -50,15 +51,61 @@ export const TeamAddComicModal: React.FC<TeamAddComicModalProps> = ({
       ? (parsedGenres.some((g) => g.toLowerCase() === '18+') ? parsedGenres : [...parsedGenres, '18+'])
       : parsedGenres.filter((g) => g.toLowerCase() !== '18+');
 
+    let finalCover = coverImage.trim() || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80';
+    let finalBanner = bannerImage.trim() || finalCover;
+
+    // Đảm bảo không bao giờ lưu ảnh Base64 vào cơ sở dữ liệu - bắt buộc CDN
+    if (finalCover.startsWith('data:') || finalCover.startsWith('blob:')) {
+      try {
+        const upCover = await uploadSingleImageToTachServer(
+          finalCover,
+          'cover',
+          finalSlug,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
+        );
+        if (upCover.isRealRemote && upCover.url && !upCover.url.startsWith('data:') && !upCover.url.startsWith('blob:')) {
+          finalCover = upCover.url;
+        } else {
+          alert('Không thể tải ảnh bìa lên CDN tachserver.site. Vui lòng kiểm tra lại kết nối mạng hoặc thử lại!');
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (eCov: any) {
+        alert(`Lỗi khi tải ảnh bìa lên CDN: ${eCov?.message || 'Không thể upload'}`);
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    if (finalBanner.startsWith('data:') || finalBanner.startsWith('blob:')) {
+      try {
+        const upBanner = await uploadSingleImageToTachServer(
+          finalBanner,
+          'cover',
+          `${finalSlug}-banner`,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
+        );
+        if (upBanner.isRealRemote && upBanner.url && !upBanner.url.startsWith('data:') && !upBanner.url.startsWith('blob:')) {
+          finalBanner = upBanner.url;
+        } else {
+          alert('Không thể tải banner lên CDN tachserver.site. Vui lòng kiểm tra lại kết nối mạng hoặc thử lại!');
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (eBan: any) {
+        alert(`Lỗi khi tải banner lên CDN: ${eBan?.message || 'Không thể upload'}`);
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
     const newComic: Comic = {
       id: `comic-${Date.now()}`,
       title: title.trim(),
       slug: finalSlug,
       otherNames: [],
-      coverImage:
-        coverImage.trim() ||
-        'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
-      bannerImage: bannerImage.trim() || coverImage.trim(),
+      coverImage: finalCover,
+      bannerImage: finalBanner,
       authors: [author.trim() || 'Đang cập nhật'],
       status: 'Đang tiến hành',
       genres: finalGenres,

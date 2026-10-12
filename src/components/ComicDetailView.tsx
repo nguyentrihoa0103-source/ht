@@ -26,7 +26,7 @@ import { LiveCommentsFeed } from './LiveCommentsFeed';
 import { TeamDonationCard } from './TeamDonationCard';
 import { CensoredCoverImage } from './CensoredCoverImage';
 import { is18PlusComic, isComicCoverRevealed, setComicCoverRevealed } from '../utils/adultFilter';
-import { formatRelativeTime, parseDateOrRelative } from '../utils/timeAgo';
+import { formatRelativeTime, parseDateOrRelative, isChapterScheduled, canUserAccessScheduledChapter } from '../utils/timeAgo';
 import { getEffectiveComicViews, getEffectiveChapterViews } from '../utils/viewTracking';
 
 interface ComicDetailViewProps {
@@ -73,6 +73,7 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
   backLabel,
 }) => {
   const [showSeoBox, setShowSeoBox] = useState(false);
+  const [scheduledAlertMsg, setScheduledAlertMsg] = useState<string | null>(null);
   const is18 = is18PlusComic(comic);
   const [isAdultRevealed, setIsAdultRevealed] = useState<boolean>(() => {
     if (!is18) return true;
@@ -107,14 +108,13 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
 
   const handleChapterClick = (chapter: Chapter) => {
     // Check if chapter is scheduled in the future
-    if (chapter.scheduledDate && new Date(chapter.scheduledDate) > new Date()) {
-      // If user is not admin or team leader, inform scheduled
-      if (!currentUser || (currentUser.role !== 'ADMIN' && currentUser.teamId !== chapter.teamId)) {
-        alert(
-          `Chương này đang được hẹn giờ phát hành vào: ${new Date(
-            chapter.scheduledDate
-          ).toLocaleString('vi-VN')}. Vui lòng quay lại sau!`
-        );
+    if (isChapterScheduled(chapter)) {
+      if (!canUserAccessScheduledChapter(chapter, currentUser)) {
+        const timeStr = chapter.scheduledDate
+          ? new Date(chapter.scheduledDate).toLocaleString('vi-VN')
+          : 'thời gian tới';
+        setScheduledAlertMsg(`Chương này đang được hẹn giờ phát hành vào: ${timeStr}. Vui lòng quay lại sau!`);
+        setTimeout(() => setScheduledAlertMsg(null), 6000);
         return;
       }
     }
@@ -496,10 +496,19 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
           </div>
         )}
 
+        {/* Alert Banner for Scheduled Chapters */}
+        {scheduledAlertMsg && (
+          <div className="mb-4 p-3.5 rounded-2xl bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs flex items-center gap-2.5 animate-in fade-in">
+            <Calendar className="w-4 h-4 shrink-0 text-sky-400" />
+            <span className="font-semibold">{scheduledAlertMsg}</span>
+          </div>
+        )}
+
         {/* Chapters Table / List */}
         <div className="divide-y divide-slate-800/80">
           {sortedChapters.map((chap) => {
-            const isScheduled = chap.scheduledDate && new Date(chap.scheduledDate) > new Date();
+            const isScheduled = isChapterScheduled(chap);
+            const canAccess = canUserAccessScheduledChapter(chap, currentUser);
 
             return (
               <div
@@ -508,9 +517,13 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
               >
                 <div
                   onClick={() => handleChapterClick(chap)}
-                  className="flex flex-wrap items-center gap-1.5 sm:gap-3 flex-1 min-w-0 cursor-pointer pr-1"
+                  className={`flex flex-wrap items-center gap-1.5 sm:gap-3 flex-1 min-w-0 pr-1 ${
+                    isScheduled && !canAccess ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'
+                  }`}
                 >
-                  <span className="font-bold text-xs sm:text-sm text-slate-200 group-hover:text-amber-400 transition-colors truncate max-w-full">
+                  <span className={`font-bold text-xs sm:text-sm text-slate-200 transition-colors truncate max-w-full ${
+                    isScheduled && !canAccess ? 'group-hover:text-sky-300' : 'group-hover:text-amber-400'
+                  }`}>
                     {chap.title}
                   </span>
 
@@ -523,9 +536,15 @@ export const ComicDetailView: React.FC<ComicDetailViewProps> = ({
                   )}
 
                   {isScheduled && (
-                    <span className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40 shrink-0">
+                    <span className={`inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
+                      canAccess
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                    }`}>
                       <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                      <span>Hẹn giờ</span>
+                      <span>
+                        {canAccess ? 'Hẹn giờ (Xem trước)' : `Hẹn: ${chap.scheduledDate ? new Date(chap.scheduledDate).toLocaleString('vi-VN') : 'Sắp ra mắt'}`}
+                      </span>
                     </span>
                   )}
                 </div>

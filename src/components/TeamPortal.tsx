@@ -30,7 +30,7 @@ import confetti from 'canvas-confetti';
 import { Comic, Chapter, ScanTeam, User, ImageServerConfig, SiteSettings } from '../types';
 import { getComicLatestTimestamp } from '../utils/timeAgo';
 import { processZipFile, processMultipleImageFiles } from '../utils/imageOptimizer';
-import { uploadImagesToTachServer } from '../utils/imageServerUploader';
+import { uploadImagesToTachServer, DEFAULT_IMAGE_SERVER_CONFIG } from '../utils/imageServerUploader';
 import { TeamAddComicModal } from './TeamAddComicModal';
 import { TeamEditComicModal } from './TeamEditComicModal';
 import { TeamEditChapterModal } from './TeamEditChapterModal';
@@ -213,7 +213,7 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
           opacity: watermarkOpacity,
           position: watermarkPosition || 'bottom-right',
           maxWidth: 2560,
-          quality: 0.96,
+          quality: 0.92,
           mode: 'logo',
         }
       );
@@ -249,7 +249,7 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
           opacity: watermarkOpacity,
           position: watermarkPosition || 'bottom-right',
           maxWidth: 2560,
-          quality: 0.96,
+          quality: 0.92,
           mode: 'logo',
         }
       );
@@ -335,6 +335,18 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
       return;
     }
 
+    if (isScheduled) {
+      if (!scheduledDateTime || !scheduledDateTime.trim()) {
+        setUploadError('Vui lòng chọn ngày và giờ muốn hẹn đăng chương!');
+        return;
+      }
+      const schedTime = new Date(scheduledDateTime).getTime();
+      if (isNaN(schedTime) || schedTime <= Date.now()) {
+        setUploadError('Thời gian hẹn giờ đăng chương phải ở mốc thời gian trong tương lai!');
+        return;
+      }
+    }
+
     const targetComic = teamComics.find((c) => c.id === selectedComicId);
     if (!targetComic) {
       setUploadError('Không tìm thấy bộ truyện đã chọn!');
@@ -343,31 +355,42 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
 
     let finalImages = processedPages;
 
-    // Optional CDN upload
-    if (uploadToCdn && imageServerConfig?.enabled) {
+    // Bắt buộc đẩy ảnh lên CDN tachserver.site - không lưu Base64 vào database
+    const hasBase64 = processedPages.some((img) => img.startsWith('data:') || img.startsWith('blob:'));
+    if (hasBase64) {
       setIsUploadingToCdn(true);
       setCdnStatusText('Đang đẩy ảnh lên CDN tachserver.site...');
+      setCdnUploadProgress(10);
       try {
+        const cleanSlug = (
+          targetComic.slug ||
+          targetComic.id?.replace(/^comic-/, '') ||
+          'comic'
+        ).trim().replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+
         const uploadRes = await uploadImagesToTachServer(
           processedPages,
-          targetComic.slug || 'comic',
+          cleanSlug,
           chapterNumber,
-          imageServerConfig,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG,
           (progress) => setCdnUploadProgress(progress)
         );
 
-        if (uploadRes.urls && uploadRes.urls.length > 0) {
+        if (uploadRes.urls && uploadRes.urls.length > 0 && uploadRes.isRealRemote) {
           finalImages = uploadRes.urls;
         } else {
-          console.warn('Lỗi CDN, dùng ảnh tối ưu trực tiếp:', uploadRes.message);
+          throw new Error(uploadRes.message || 'Không thể tải ảnh lên server CDN');
         }
       } catch (err: any) {
-        console.warn('Upload CDN thất bại:', err);
+        setIsUploadingToCdn(false);
+        setUploadError(`Lỗi khi tải ảnh lên CDN: ${err?.message || 'Vui lòng kiểm tra lại kết nối mạng hoặc thử lại!'}`);
+        return; // Dừng lại, KHÔNG lưu Base64 vào database!
       } finally {
         setIsUploadingToCdn(false);
       }
     }
 
+    const isChapScheduled = Boolean(isScheduled && scheduledDateTime && new Date(scheduledDateTime).getTime() > Date.now());
     const newChapter: Chapter = {
       id: `chap-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       comicId: targetComic.id,
@@ -375,7 +398,8 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
       chapterNumber: Number(chapterNumber),
       title: chapterTitle.trim() || `Chương ${chapterNumber}`,
       createdAt: new Date().toISOString(),
-      scheduledDate: isScheduled && scheduledDateTime ? scheduledDateTime : undefined,
+      scheduledDate: isChapScheduled ? scheduledDateTime : undefined,
+      status: isChapScheduled ? 'SCHEDULED' : 'PUBLISHED',
       isPasswordProtected: isPassProtected,
       password: isPassProtected ? chapterPassword.trim() : undefined,
       views: 0,
@@ -386,7 +410,11 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
 
     try {
       onAddChapter(targetComic.id, newChapter);
-      setUploadSuccess(`Đã xuất bản thành công "${newChapter.title}" (${finalImages.length} trang)!`);
+      if (isChapScheduled) {
+        setUploadSuccess(`Đã lên lịch hẹn đăng "${newChapter.title}" vào lúc ${new Date(scheduledDateTime).toLocaleString('vi-VN')}! (${finalImages.length} trang)`);
+      } else {
+        setUploadSuccess(`Đã xuất bản thành công "${newChapter.title}" (${finalImages.length} trang)!`);
+      }
       
       try {
         confetti({ particleCount: 100, spread: 80, origin: { y: 0.5 } });
@@ -1260,24 +1288,19 @@ export const TeamPortal: React.FC<TeamPortalProps> = ({
               )}
             </div>
 
-            {/* CDN Options - Visible to Admin & Team Leader if imageServerConfig is enabled */}
-            {(currentUser.role === 'ADMIN' || currentUser.role === 'TEAM_LEADER' || isLeader) && imageServerConfig?.enabled && (
-              <div className="p-4 bg-slate-900/60 rounded-2xl border border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Server className="w-5 h-5 text-emerald-400" />
-                  <div>
-                    <p className="text-xs font-bold text-white">Tự Động Đẩy Ảnh Lên CDN tachserver.site</p>
-                    <p className="text-[11px] text-slate-400">Giúp tăng tốc độ tải ảnh truyện x10 lần cho độc giả và giảm tải server</p>
-                  </div>
+            {/* CDN Status Notice */}
+            <div className="p-4 bg-slate-900/60 rounded-2xl border border-emerald-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Server className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-white flex items-center gap-2">
+                    Tự Động Đẩy Ảnh Lên CDN tachserver.site
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">Đang kích hoạt</span>
+                  </p>
+                  <p className="text-[11px] text-slate-400">Ảnh chương mới tải lên sẽ tự động chuyển thành link CDN tốc độ cao, không lưu Base64 nặng database</p>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={uploadToCdn}
-                  onChange={(e) => setUploadToCdn(e.target.checked)}
-                  className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
-                />
               </div>
-            )}
+            </div>
 
             {/* CDN Progress */}
             {isUploadingToCdn && (

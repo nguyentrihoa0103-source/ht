@@ -26,7 +26,7 @@ import { LiveCommentsFeed } from './LiveCommentsFeed';
 import { TopFeaturedSlider } from './TopFeaturedSlider';
 import { CensoredCoverImage } from './CensoredCoverImage';
 import { is18PlusComic } from '../utils/adultFilter';
-import { formatRelativeTime, parseDateOrRelative, getComicLatestTimestamp } from '../utils/timeAgo';
+import { formatRelativeTime, parseDateOrRelative, getComicLatestTimestamp, isChapterScheduled } from '../utils/timeAgo';
 import { toSlug } from '../utils/slug';
 import { getEffectiveComicViews } from '../utils/viewTracking';
 
@@ -78,10 +78,11 @@ const ComicCardItem = React.memo<{
   onViewTeam?: (team: ScanTeam) => void;
   siteSettings?: SiteSettings;
 }>(({ comic, onSelectComic, teams, onViewTeam, siteSettings }) => {
-  // Sắp xếp danh sách chương theo số chương lớn nhất hoặc thời gian cập nhật thực tế của chương
+  // Sắp xếp danh sách chương theo số chương lớn nhất hoặc thời gian cập nhật thực tế của chương (lọc bỏ chương hẹn giờ chưa tới hạn)
   const sortedChaps = useMemo(() => {
     if (!comic.chapters || comic.chapters.length === 0) return [];
-    return [...comic.chapters].sort((a, b) => {
+    const visibleChapters = comic.chapters.filter((ch) => !isChapterScheduled(ch));
+    return [...visibleChapters].sort((a, b) => {
       const numA = typeof a.chapterNumber === 'number' ? a.chapterNumber : parseFloat(String(a.chapterNumber)) || 0;
       const numB = typeof b.chapterNumber === 'number' ? b.chapterNumber : parseFloat(String(b.chapterNumber)) || 0;
       if (numB !== numA) return numB - numA;
@@ -770,9 +771,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               Mở Portal Nhóm Dịch
             </button>
           </div>
-
         </div>
-
       </div>
     </div>
   );

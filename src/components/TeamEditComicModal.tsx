@@ -4,6 +4,7 @@ import { Comic, ScanTeam, ImageServerConfig } from '../types';
 import { ImageUploadField } from './ImageUploadField';
 import { toSlug } from '../utils/slug';
 import { is18PlusComic } from '../utils/adultFilter';
+import { uploadSingleImageToTachServer, DEFAULT_IMAGE_SERVER_CONFIG } from '../utils/imageServerUploader';
 
 interface TeamEditComicModalProps {
   isOpen: boolean;
@@ -34,15 +35,65 @@ export const TeamEditComicModal: React.FC<TeamEditComicModalProps> = ({
   const [isHot, setIsHot] = useState(!!comic.isHot);
   const [isTrending, setIsTrending] = useState(!!comic.isTrending);
   const [is18Plus, setIs18Plus] = useState(comic.is18Plus !== undefined ? comic.is18Plus : is18PlusComic(comic));
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
       setErrorMsg('Vui lòng nhập tên bộ truyện!');
       return;
+    }
+    setIsSubmitting(true);
+
+    const finalSlug = toSlug(slug.trim() || title.trim()) || comic.slug;
+    let finalCover = coverImage.trim() || comic.coverImage;
+    let finalBanner = bannerImage.trim() || coverImage.trim() || comic.bannerImage;
+
+    if (finalCover.startsWith('data:') || finalCover.startsWith('blob:')) {
+      try {
+        const upCover = await uploadSingleImageToTachServer(
+          finalCover,
+          'cover',
+          finalSlug,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
+        );
+        if (upCover.isRealRemote && upCover.url && !upCover.url.startsWith('data:') && !upCover.url.startsWith('blob:')) {
+          finalCover = upCover.url;
+        } else {
+          alert('Không thể tải ảnh bìa lên CDN tachserver.site. Vui lòng kiểm tra lại kết nối mạng hoặc thử lại!');
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (eCov: any) {
+        alert(`Lỗi khi tải ảnh bìa lên CDN: ${eCov?.message || 'Không thể upload'}`);
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    if (finalBanner.startsWith('data:') || finalBanner.startsWith('blob:')) {
+      try {
+        const upBanner = await uploadSingleImageToTachServer(
+          finalBanner,
+          'cover',
+          `${finalSlug}-banner`,
+          imageServerConfig || DEFAULT_IMAGE_SERVER_CONFIG
+        );
+        if (upBanner.isRealRemote && upBanner.url && !upBanner.url.startsWith('data:') && !upBanner.url.startsWith('blob:')) {
+          finalBanner = upBanner.url;
+        } else {
+          alert('Không thể tải banner lên CDN tachserver.site. Vui lòng kiểm tra lại kết nối mạng hoặc thử lại!');
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (eBan: any) {
+        alert(`Lỗi khi tải banner lên CDN: ${eBan?.message || 'Không thể upload'}`);
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     const parsedGenres = genresStr.split(',').map((s) => s.trim()).filter(Boolean);
@@ -53,20 +104,21 @@ export const TeamEditComicModal: React.FC<TeamEditComicModalProps> = ({
     const updated: Comic = {
       ...comic,
       title: title.trim(),
-      slug: toSlug(slug.trim() || title.trim()) || comic.slug,
+      slug: finalSlug,
       otherNames: otherNamesStr.split(',').map((s) => s.trim()).filter(Boolean),
       authors: authorsStr.split(',').map((s) => s.trim()).filter(Boolean),
       genres: finalGenres,
       status,
       summary: summary.trim(),
-      coverImage: coverImage.trim() || comic.coverImage,
-      bannerImage: bannerImage.trim() || coverImage.trim() || comic.bannerImage,
+      coverImage: finalCover,
+      bannerImage: finalBanner,
       isHot: !!isHot,
       isTrending: isAdmin ? isTrending : !!comic.isTrending,
       is18Plus: is18Plus,
       updatedAt: comic.updatedAt,
     };
 
+    setIsSubmitting(false);
     onSaveComic(updated);
     onClose();
   };
