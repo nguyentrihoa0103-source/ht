@@ -496,6 +496,186 @@ if ($pdo) {
     } catch (Exception $eAvatar) {}
 }
 
+/**
+ * Chuẩn hóa chuỗi ảnh Base64:
+ * Hỗ trợ tự động nhận diện cả data:image/... và data:application/octet-stream;base64
+ * Tự động phát hiện mime type chính xác qua magic bytes (JPEG, PNG, WEBP, GIF)
+ */
+function normalizeBase64DataUrl($str) {
+    if (!is_string($str) || strpos($str, 'data:') !== 0) {
+        return $str;
+    }
+    if (preg_match('/^data:(?:application\/octet-stream|;|image\/(?:x-[a-z]+|\*));base64,(.+)$/si', $str, $m)) {
+        $raw = $m[1];
+        $prefix = substr($raw, 0, 16);
+        $mime = 'image/jpeg';
+        if (strpos($prefix, '/9j/') === 0) {
+            $mime = 'image/jpeg';
+        } elseif (strpos($prefix, 'iVBOR') === 0) {
+            $mime = 'image/png';
+        } elseif (strpos($prefix, 'UklGR') === 0) {
+            $mime = 'image/webp';
+        } elseif (strpos($prefix, 'R0lGOD') === 0) {
+            $mime = 'image/gif';
+        }
+        return "data:{$mime};base64,{$raw}";
+    }
+    return $str;
+}
+
+/**
+ * Tự động upload mảng ảnh Base64 lên CDN tachserver.site và thay thế bằng URL CDN
+ * Giúp database luôn nhẹ nhàng (từ vài chục MB/chapter xuống chỉ vài KB)
+ */
+function uploadBase64ImagesToCdn($images, $comicSlug = 'comic', $chapterNum = 1) {
+    @ini_set('memory_limit', '1024M');
+    if (!is_array($images) || empty($images)) {
+        return $images;
+    }
+
+    $cleanSlug = preg_replace('/[^a-zA-Z0-9_-]/', '-', preg_replace('/^comic-/', '', $comicSlug)) ?: 'comic';
+    $cleanChapNum = is_numeric($chapterNum) ? floatval($chapterNum) : 1;
+
+    // Kiểm tra xem mảng có chứa bất kỳ ảnh Base64 nào không
+    $hasBase64 = false;
+    foreach ($images as $img) {
+        if (is_string($img) && (strpos($img, 'data:') === 0 || strpos($img, 'blob:') === 0)) {
+            $hasBase64 = true;
+            break;
+        }
+    }
+
+    if (!$hasBase64) {
+        return $images; // Toàn bộ là URL, không cần upload
+    }
+
+    $normalizedImages = [];
+    $base64Indices = [];
+    $base64Payload = [];
+
+    foreach ($images as $idx => $img) {
+        if (is_string($img) && (strpos($img, 'data:') === 0 || strpos($img, 'blob:') === 0)) {
+            $norm = normalizeBase64DataUrl($img);
+            $normalizedImages[$idx] = $norm;
+            $base64Indices[] = $idx;
+            $base64Payload[] = $norm;
+        } else {
+            $normalizedImages[$idx] = $img;
+        }
+    }
+
+    if (empty($base64Payload)) {
+        return $normalizedImages;
+    }
+
+    // TỐI ƯU SIÊU CẤP CHỐNG 502 CLOUDFLARE:
+    // Upload từng ảnh với placeholder để tachserver.site giữ đúng số thứ tự (001.jpg, 002.jpg...)
+    // Dừng lại sau tối đa 14 giây để kịp lưu kết quả vào database, tuyệt đối không bị timeout 502 Cloudflare (30s)
+    $startTime = microtime(true);
+
+    foreach ($base64Indices as $targetIdx) {
+        // Nếu tổng thời gian upload đã vượt quá 14s, dừng lại và lưu tiến độ hiện tại vào DB
+        if ((microtime(true) - $startTime) > 14) {
+            break;
+        }
+
+        $singleBase64 = $normalizedImages[$targetIdx];
+        if (!is_string($singleBase64) || (strpos($singleBase64, 'data:') !== 0 && strpos($singleBase64, 'blob:') !== 0)) {
+            continue; // Đã là URL, bỏ qua
+        }
+
+        // Tạo mảng gửi lên CDN: Giữ nguyên chỉ mục của ảnh, các vị trí khác dùng placeholder URL để tachserver đánh số chuẩn
+        $cdnPayload = [];
+        foreach ($normalizedImages as $k => $imgVal) {
+            if ($k === $targetIdx) {
+                $cdnPayload[] = $singleBase64;
+            } elseif (is_string($imgVal) && strpos($imgVal, 'http') === 0) {
+                $cdnPayload[] = $imgVal;
+            } else {
+                $cdnPayload[] = 'https://tachserver.site/placeholder-' . ($k + 1);
+            }
+        }
+
+        $postFields = [
+            'comic_slug' => $cleanSlug,
+            'chapter_number' => $cleanChapNum,
+            'upload_type' => 'chapter',
+            'base64_images' => json_encode($cdnPayload, JSON_UNESCAPED_SLASHES),
+        ];
+
+        $ch = curl_init('https://tachserver.site/upload.php');
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'X-API-KEY: DuaLeo_Secret_Image_Key_2026',
+            'Content-Type: application/x-www-form-urlencoded',
+        ]);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+        $res = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode === 200 && $res) {
+            $resData = json_decode($res, true);
+            if (!empty($resData['image_urls']) && is_array($resData['image_urls'])) {
+                $returnedUrl = reset($resData['image_urls']);
+                if ($returnedUrl && is_string($returnedUrl) && strpos($returnedUrl, 'http') === 0) {
+                    $normalizedImages[$targetIdx] = $returnedUrl;
+                }
+            }
+        }
+    }
+
+    return array_values($normalizedImages);
+}
+
+/**
+ * Tự động upload ảnh đơn Base64 (ảnh bìa, banner) lên CDN tachserver.site
+ * Đảm bảo database luôn nhẹ và load nhanh từ CDN
+ */
+function uploadSingleBase64ImageToCdn($base64Data, $type = 'cover', $comicSlug = 'comic') {
+    if (!is_string($base64Data) || (strpos($base64Data, 'data:') !== 0 && strpos($base64Data, 'blob:') !== 0)) {
+        return $base64Data;
+    }
+
+    $cleanSlug = preg_replace('/[^a-zA-Z0-9_-]/', '-', preg_replace('/^comic-/', '', $comicSlug)) ?: 'cover';
+    $postFields = [
+        'comic_slug' => $cleanSlug,
+        'upload_type' => $type,
+        'single_base64' => normalizeBase64DataUrl($base64Data),
+    ];
+
+    $ch = curl_init('https://tachserver.site/upload.php');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'X-API-KEY: DuaLeo_Secret_Image_Key_2026',
+        'Content-Type: application/x-www-form-urlencoded',
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+    $res = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200 && $res) {
+        $resData = json_decode($res, true);
+        if (!empty($resData['image_urls']) && is_array($resData['image_urls'])) {
+            $returnedUrl = reset($resData['image_urls']);
+            if ($returnedUrl && is_string($returnedUrl) && strpos($returnedUrl, 'http') === 0) {
+                return $returnedUrl;
+            }
+        }
+    }
+
+    return $base64Data;
+}
+
 // Kiểm tra header API Key nếu là thao tác sửa/xóa/thêm
 $headers = [];
 if (function_exists('getallheaders')) {
@@ -675,6 +855,197 @@ if ($action === 'auto_import_from_json' || $action === 'sync_json_to_sql') {
 }
 
 // -----------------------------------------------------------------------------
+// ROUTE: TỰ ĐỘNG QUÉT VÀ DI CHUYỂN ẢNH BASE64 LÊN CDN TACHSERVER.SITE (MIGRATE TO CDN)
+// Tối ưu siêu tốc: Xử lý từng chương, không ORDER BY để tránh timeout 502 / tràn RAM
+// -----------------------------------------------------------------------------
+if ($action === 'auto_migrate_base64_to_cdn' || $action === 'migrate_base64') {
+    @set_time_limit(180);
+    @ini_set('memory_limit', '1024M');
+
+    $reqKey = isset($_GET['key']) ? $_GET['key'] : (isset($_POST['key']) ? $_POST['key'] : $clientKey);
+    if ($reqKey !== $SECRET_API_KEY && $reqKey !== 'DuaLeo_Secret_Image_Key_2026' && $reqKey !== 'Leesin_Secret_MySQL_Key_2026') {
+        sendJsonResponse(['success' => false, 'message' => 'Từ chối truy cập: Sai API Key bảo mật!'], 403);
+    }
+
+    $batchSize = isset($_GET['batch']) ? max(1, intval($_GET['batch'])) : 1;
+    $autoMode = !empty($_GET['auto']);
+    $filterComic = trim($_GET['comic_id'] ?? $_GET['comic_slug'] ?? '');
+    $targetChapId = trim($_GET['id'] ?? $_GET['chapter_id'] ?? '');
+
+    $chapsToMigrate = [];
+
+    // TRƯỜNG HỢP 1: Chỉ định cụ thể 1 chương truyện bằng ID (Tra cứu Primary Key cực nhanh < 0.0001s)
+    if (!empty($targetChapId)) {
+        try {
+            $cStmt = $pdo->prepare("SELECT id, comic_id, comic_title, chapter_number, images FROM chapters WHERE id = ? LIMIT 1");
+            $cStmt->execute([$targetChapId]);
+            $row = $cStmt->fetch();
+            if ($row && (strpos($row['images'], 'data:') !== false || strpos($row['images'], 'blob:') !== false)) {
+                $chapsToMigrate[] = $row;
+            }
+        } catch (Exception $eId) {}
+    }
+    // TRƯỜNG HỢP 2: Quét theo bộ truyện (comic_id hoặc slug) -> dùng B-Tree INDEX (idx_comic)
+    elseif (!empty($filterComic)) {
+        $exactComicId = $filterComic;
+        try {
+            $cFind = $pdo->prepare("SELECT id FROM comics WHERE id = ? OR slug = ? LIMIT 1");
+            $cFind->execute([$filterComic, $filterComic]);
+            $cRow = $cFind->fetch();
+            if ($cRow && !empty($cRow['id'])) {
+                $exactComicId = $cRow['id'];
+            }
+        } catch (Exception $eCf) {}
+
+        $getSql = "
+            SELECT id, comic_id, comic_title, chapter_number, images
+            FROM chapters
+            WHERE comic_id = ? AND (images LIKE '%data:%' OR LOCATE('data:', images) > 0)
+            LIMIT " . intval($batchSize) . "
+        ";
+        $getStmt = $pdo->prepare($getSql);
+        $getStmt->execute([$exactComicId]);
+        $chapsToMigrate = $getStmt->fetchAll();
+    }
+    // TRƯỜNG HỢP 3: Quét tự động toàn bộ database (không truyền comic_id)
+    // TỐI ƯU SIÊU CẤP CHỐNG 502: Không quét FULL TABLE 9.8GB bằng WHERE images LIKE '%data:%'
+    // Thay vào đó, quét bảng comics (chỉ 660 dòng, ~1MB) và dùng INDEX (idx_comic) để tìm chương chứa Base64 trong 0.05s
+    else {
+        try {
+            $comicsStmt = $pdo->query("SELECT id FROM comics ORDER BY id DESC");
+            $comicsList = $comicsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $checkChapStmt = $pdo->prepare("
+                SELECT id, comic_id, comic_title, chapter_number, images
+                FROM chapters
+                WHERE comic_id = ? AND (images LIKE '%data:%' OR LOCATE('data:', images) > 0)
+                LIMIT 1
+            ");
+
+            foreach ($comicsList as $cid) {
+                $checkChapStmt->execute([$cid]);
+                $foundRow = $checkChapStmt->fetch();
+                if ($foundRow) {
+                    $chapsToMigrate[] = $foundRow;
+                    if (count($chapsToMigrate) >= $batchSize) {
+                        break;
+                    }
+                }
+            }
+        } catch (Exception $eAutoScan) {}
+
+        // Kiểm tra dự phòng cho các chương độc lập (nếu có)
+        if (empty($chapsToMigrate)) {
+            try {
+                $orphanStmt = $pdo->query("SELECT id, comic_id, comic_title, chapter_number, images FROM chapters WHERE (images LIKE '%data:%' OR LOCATE('data:', images) > 0) LIMIT " . intval($batchSize));
+                $orphanRows = $orphanStmt->fetchAll();
+                if (!empty($orphanRows)) {
+                    $chapsToMigrate = $orphanRows;
+                }
+            } catch (Exception $eOrphan) {}
+        }
+    }
+
+    if (empty($chapsToMigrate)) {
+        // Đã hết 100% chapter chứa Base64!
+        if (empty($filterComic) && isset($_GET['optimize'])) {
+            try { $pdo->exec("OPTIMIZE TABLE chapters"); } catch (Exception $eOpt) {}
+        }
+
+        if ($autoMode || (isset($_GET['view']) && $_GET['view'] === 'html')) {
+            header('Content-Type: text/html; charset=utf-8');
+            echo "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Hoàn tất</title></head><body style='font-family:sans-serif;background:#0b1120;color:#34d399;padding:40px;text-align:center;'><h2>🎉 HOÀN TẤT 100%! Bảng chapters đã sạch hoàn toàn ảnh Base64.</h2><p style='color:#94a3b8;'>Không còn chương nào chứa Base64 trong cơ sở dữ liệu.</p></body></html>";
+            exit();
+        }
+
+        sendJsonResponse([
+            'success' => true,
+            'processed' => 0,
+            'has_more' => false,
+            'remaining' => 0,
+            'message' => 'Toàn bộ database đã sạch Base64!'
+        ]);
+    }
+
+    $processed = 0;
+    $bytesFreed = 0;
+    $migratedDetails = [];
+
+    foreach ($chapsToMigrate as $row) {
+        $chapId = $row['id'];
+        $rawLen = strlen($row['images'] ?? '');
+        $rawImages = json_decode($row['images'] ?: '[]', true);
+        if (!is_array($rawImages) || empty($rawImages)) continue;
+
+        $newImages = uploadBase64ImagesToCdn($rawImages, $row['comic_id'], $row['chapter_number']);
+        $newJson = json_encode($newImages, JSON_UNESCAPED_SLASHES);
+        $newLen = strlen($newJson);
+
+        if ($newLen < $rawLen) {
+            $upStmt = $pdo->prepare("UPDATE chapters SET images = ? WHERE id = ?");
+            $upStmt->execute([$newJson, $chapId]);
+            $savedBytes = $rawLen - $newLen;
+            $bytesFreed += $savedBytes;
+            $processed++;
+            $migratedDetails[] = [
+                'id' => $chapId,
+                'comic_id' => $row['comic_id'],
+                'comic_title' => $row['comic_title'] ?? '',
+                'chapter_number' => $row['chapter_number'],
+                'saved_mb' => round($savedBytes / (1024 * 1024), 2),
+                'still_has_base64' => (strpos($newJson, 'data:') !== false)
+            ];
+        }
+    }
+
+    if ($autoMode || (isset($_GET['view']) && $_GET['view'] === 'html')) {
+        header('Content-Type: text/html; charset=utf-8');
+        $mbFreedBatch = round($bytesFreed / (1024 * 1024), 2);
+        echo "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Tự động di chuyển Base64 lên CDN</title>";
+        echo "<meta http-equiv='refresh' content='1'>";
+        echo "<style>
+            body { font-family: -apple-system, sans-serif; background: #0b1120; color: #f8fafc; padding: 24px; text-align: center; }
+            .card { background: #1e293b; border-radius: 16px; padding: 28px; max-width: 600px; margin: 40px auto; border: 1px solid #334155; }
+            .success { color: #34d399; font-size: 24px; font-weight: bold; }
+        </style></head><body><div class='card'>";
+        echo "<h2>⚡ Đang di chuyển ảnh Base64 sang CDN tachserver.site</h2>";
+        echo "<p style='color:#38bdf8'>Đã xử lý xong chương: " . (!empty($migratedDetails[0]['comic_title']) ? htmlspecialchars($migratedDetails[0]['comic_title']) : '') . " (Chap " . ($migratedDetails[0]['chapter_number'] ?? '') . ")</p>";
+        echo "<div class='success'>-{$mbFreedBatch} MB</div>";
+        echo "<p style='color:#94a3b8;font-size:14px;'>Đang tự động chuyển sang chương tiếp theo sau 1 giây...</p>";
+        echo "</div></body></html>";
+        exit();
+    }
+
+    sendJsonResponse([
+        'success' => true,
+        'processed' => $processed,
+        'has_more' => true,
+        'mb_freed' => round($bytesFreed / (1024 * 1024), 2),
+        'details' => $migratedDetails
+    ]);
+}
+
+// -----------------------------------------------------------------------------
+// ROUTE: THU HỒI DUNG LƯỢNG Ổ CỨNG BẢNG CHAPTERS (OPTIMIZE TABLE)
+// -----------------------------------------------------------------------------
+if ($action === 'optimize_chapters' || $action === 'optimize_table') {
+    @set_time_limit(300);
+    @ini_set('memory_limit', '1024M');
+
+    $reqKey = isset($_GET['key']) ? $_GET['key'] : (isset($_POST['key']) ? $_POST['key'] : $clientKey);
+    if ($reqKey !== $SECRET_API_KEY && $reqKey !== 'DuaLeo_Secret_Image_Key_2026' && $reqKey !== 'Leesin_Secret_MySQL_Key_2026') {
+        sendJsonResponse(['success' => false, 'message' => 'Từ chối truy cập: Sai API Key bảo mật!'], 403);
+    }
+
+    try {
+        $pdo->exec("OPTIMIZE TABLE chapters");
+        sendJsonResponse(['success' => true, 'message' => 'Đã tối ưu hóa và thu hồi dung lượng bảng chapters thành công!']);
+    } catch (Exception $e) {
+        sendJsonResponse(['success' => false, 'message' => 'Lỗi tối ưu bảng chapters: ' . $e->getMessage()], 500);
+    }
+}
+
+// -----------------------------------------------------------------------------
 // ROUTE: LẤY DANH SÁCH TRUYỆN (GET COMICS / GET TEAM COMICS)
 // Sắp xếp chuẩn theo thời gian cập nhật chapter mới nhất: ORDER BY latest_chapter_update DESC
 // -----------------------------------------------------------------------------
@@ -833,9 +1204,27 @@ if ($action === 'get_comic' || $action === 'get_comic_detail') {
         $c['isTrending'] = (bool)$c['is_trending'];
         $c['is18Plus'] = !empty($c['is_18_plus']);
 
-        $chapStmt = $pdo->prepare("SELECT * FROM chapters WHERE comic_id = ? ORDER BY chapter_number ASC");
-        $chapStmt->execute([$c['id']]);
-        $chaps = $chapStmt->fetchAll();
+        // Tối ưu hóa: Bỏ cột 'images' nặng nề khi lấy chi tiết truyện, tránh tràn RAM (512MB)
+        // Chi tiết ảnh chapter chỉ cần tải khi vào đọc (action=get_chapter)
+        try {
+            $chapStmt = $pdo->prepare("
+                SELECT id, comic_id, comic_title, chapter_number, title, is_password_protected, scheduled_date, team_id, team_name, created_at, updated_at, views
+                FROM chapters
+                WHERE comic_id = ?
+                ORDER BY chapter_number ASC
+            ");
+            $chapStmt->execute([$c['id']]);
+            $chaps = $chapStmt->fetchAll();
+        } catch (Exception $eChap) {
+            $chapStmt = $pdo->prepare("
+                SELECT id, comic_id, comic_title, chapter_number, title, is_password_protected, scheduled_date, team_id, team_name, created_at, views
+                FROM chapters
+                WHERE comic_id = ?
+                ORDER BY chapter_number ASC
+            ");
+            $chapStmt->execute([$c['id']]);
+            $chaps = $chapStmt->fetchAll();
+        }
 
         foreach ($chaps as &$ch) {
             $ch['comicId'] = $ch['comic_id'];
@@ -848,7 +1237,7 @@ if ($action === 'get_comic' || $action === 'get_comic_detail') {
             $ch['createdAt'] = $ch['created_at'];
             $ch['updatedAt'] = !empty($ch['updated_at']) ? $ch['updated_at'] : $ch['created_at'];
             $ch['views'] = intval($ch['views']);
-            $ch['images'] = json_decode($ch['images'] ?: '[]', true);
+            $ch['images'] = []; // Danh sách rỗng an toàn, tải ảnh riêng lẻ qua get_chapter
         }
         $c['chapters'] = $chaps;
 
@@ -965,9 +1354,27 @@ if ($action === 'get_chapter') {
 
         // Tự động chuyển tachserver.online -> tachserver.site
         $cleanImages = [];
+        $hasBase64InChap = false;
         foreach ($rawImages as $img) {
             if (is_string($img) && strlen($img) > 0) {
+                if (strpos($img, 'data:') === 0 || strpos($img, 'blob:') === 0) {
+                    $hasBase64InChap = true;
+                }
                 $cleanImages[] = str_replace('tachserver.online', 'tachserver.site', $img);
+            }
+        }
+
+        // Chỉ tự động đẩy lên CDN trong get_chapter nếu có cờ syncCdn=1
+        // Tránh block người đọc truyện bằng các request HTTP cURL gây chậm và lỗi 502 Cloudflare
+        if ($hasBase64InChap && !empty($cleanImages) && !empty($_GET['syncCdn'])) {
+            $effectiveComicSlug = $comicSlug ?: ($ch['comic_id'] ?? 'comic');
+            $upCdnImages = uploadBase64ImagesToCdn($cleanImages, $effectiveComicSlug, $ch['chapterNumber'] ?? ($ch['chapter_number'] ?? 1));
+            if (!empty($upCdnImages) && count($upCdnImages) > 0) {
+                $cleanImages = $upCdnImages;
+                try {
+                    $upDbStmt = $pdo->prepare("UPDATE chapters SET images = ? WHERE id = ?");
+                    $upDbStmt->execute([json_encode($cleanImages, JSON_UNESCAPED_SLASHES), $ch['id']]);
+                } catch (Exception $eUpDb) {}
             }
         }
 
@@ -1006,9 +1413,13 @@ if ($action === 'get_chapter') {
             }
         }
 
-        // Nếu vẫn chưa có ảnh, tiến hành cào trực tiếp từ lazyteam.site
+        // Nếu vẫn chưa có ảnh, chỉ cào trực tiếp từ lazyteam.site nếu có link lazyteam hoặc yêu cầu forceSync
         $forceSync = (isset($_GET['force']) && $_GET['force'] === '1') || (isset($_GET['forceSync']) && $_GET['forceSync'] === '1');
-        if ((empty($cleanImages) || $forceSync) && $ch['chapterNumber'] !== null) {
+        $hasLazyLink = (!empty($ch['link']) && (strpos($ch['link'], 'truyen-tranh') !== false || strpos($ch['link'], 'lazyteam') !== false))
+            || (!empty($_GET['link']) && strpos($_GET['link'], 'lazyteam') !== false);
+
+        // Truyện do nhóm dịch tự tạo (!empty($ch['team_id']) và không có link lazyteam) sẽ KHÔNG cào để tránh timeout 502
+        if ((empty($cleanImages) || $forceSync) && $ch['chapterNumber'] !== null && ($forceSync || $hasLazyLink)) {
             $effectiveSlug = $comicSlug;
             $coverImage = $_GET['coverImage'] ?? '';
             
@@ -1089,7 +1500,8 @@ if ($action === 'get_chapter') {
                 $chCurl = curl_init();
                 curl_setopt($chCurl, CURLOPT_URL, $curlUrl);
                 curl_setopt($chCurl, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($chCurl, CURLOPT_TIMEOUT, 8);
+                curl_setopt($chCurl, CURLOPT_TIMEOUT, 3);
+                curl_setopt($chCurl, CURLOPT_CONNECTTIMEOUT, 2);
                 curl_setopt($chCurl, CURLOPT_FOLLOWLOCATION, true);
                 curl_setopt($chCurl, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
                 curl_setopt($chCurl, CURLOPT_REFERER, 'https://lazyteam.site/');
@@ -1119,7 +1531,8 @@ if ($action === 'get_chapter') {
                     $chCurl = curl_init();
                     curl_setopt($chCurl, CURLOPT_URL, $comicUrl);
                     curl_setopt($chCurl, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($chCurl, CURLOPT_TIMEOUT, 8);
+                    curl_setopt($chCurl, CURLOPT_TIMEOUT, 3);
+                    curl_setopt($chCurl, CURLOPT_CONNECTTIMEOUT, 2);
                     curl_setopt($chCurl, CURLOPT_FOLLOWLOCATION, true);
                     curl_setopt($chCurl, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
                     curl_setopt($chCurl, CURLOPT_REFERER, 'https://lazyteam.site/');
@@ -1425,6 +1838,14 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
         $coverImage = $data['coverImage'] ?? $data['cover_image'] ?? $data['cover_url'] ?? $data['coverUrl'] ?? '';
         $bannerImage = $data['bannerImage'] ?? $data['banner_image'] ?? $data['banner_url'] ?? $data['bannerUrl'] ?? $coverImage;
 
+        // Tự động chuyển ảnh bìa và banner Base64 sang CDN tachserver.site
+        if (is_string($coverImage) && (strpos($coverImage, 'data:') === 0 || strpos($coverImage, 'blob:') === 0)) {
+            $coverImage = uploadSingleBase64ImageToCdn($coverImage, 'cover', $slug);
+        }
+        if (is_string($bannerImage) && (strpos($bannerImage, 'data:') === 0 || strpos($bannerImage, 'blob:') === 0)) {
+            $bannerImage = uploadSingleBase64ImageToCdn($bannerImage, 'cover', $slug . '-banner');
+        }
+
         // Chuẩn hóa danh sách tác giả
         $authors = $data['authors'] ?? $data['author'] ?? ['Đang cập nhật'];
         if (is_string($authors)) {
@@ -1639,6 +2060,10 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
             ");
             foreach ($data['chapters'] as $ch) {
                 if (empty($ch['id'])) continue;
+                $chImages = $ch['images'] ?? [];
+                if (is_array($chImages) && count($chImages) > 0) {
+                    $chImages = uploadBase64ImagesToCdn($chImages, $slug ?: $comicId, $ch['chapterNumber'] ?? ($ch['chapter_number'] ?? 1));
+                }
                 $chCreated = normalizeMysqlDateTime($ch['createdAt'] ?? $nowIso, false);
                 $chUpdated = normalizeMysqlDateTime($ch['updatedAt'] ?? $chCreated, false);
                 $chScheduled = normalizeMysqlDateTime($ch['scheduledDate'] ?? null, true);
@@ -1652,7 +2077,7 @@ if (($action === 'save_comic' || $action === 'update_comic' || $action === 'add_
                     ':password' => $ch['password'] ?? null,
                     ':scheduled_date' => $chScheduled,
                     ':views' => intval($ch['views'] ?? 0),
-                    ':images' => json_encode($ch['images'] ?? [], JSON_UNESCAPED_SLASHES),
+                    ':images' => json_encode($chImages, JSON_UNESCAPED_SLASHES),
                     ':team_id' => $ch['teamId'] ?? $teamId,
                     ':team_name' => $ch['teamName'] ?? $teamName,
                     ':created_at' => $chCreated,
@@ -1757,6 +2182,13 @@ if (($action === 'save_chapter' || $action === 'add_chapter' || $action === 'upd
         $resolvedCreatedAt = normalizeMysqlDateTime($rawCreated, false);
         $resolvedUpdatedAt = normalizeMysqlDateTime($rawUpdated, false);
         $resolvedScheduledDate = normalizeMysqlDateTime($data['scheduledDate'] ?? null, true);
+
+        // Tự động kiểm tra và upload ảnh Base64 lên CDN tachserver.site trước khi lưu vào MySQL
+        $rawChapImages = $data['images'] ?? [];
+        if (is_array($rawChapImages) && count($rawChapImages) > 0) {
+            $effectiveSlugForUpload = !empty($matchedComic['slug']) ? $matchedComic['slug'] : $targetComicId;
+            $data['images'] = uploadBase64ImagesToCdn($rawChapImages, $effectiveSlugForUpload, $targetChapNum);
+        }
 
         try {
             $stmt = $pdo->prepare("
