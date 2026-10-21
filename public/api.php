@@ -3458,19 +3458,68 @@ if ($action === 'clear_all_notifications' && $_SERVER['REQUEST_METHOD'] === 'POS
 // -----------------------------------------------------------------------------
 // HELPER: TỰ ĐỘNG TẠO VÀ CẬP NHẬT TẤT CẢ FILE SITEMAP XML VÀO THƯ MỤC GỐC
 // -----------------------------------------------------------------------------
+// HELPER: TỰ ĐỘNG TẠO VÀ CẬP NHẬT TẤT CẢ FILE SITEMAP XML VÀO THƯ MỤC GỐC
+// -----------------------------------------------------------------------------
+function cleanXmlForSitemap($str) {
+    if (!$str) return '';
+    // Loại bỏ ký tự điều khiển ASCII không hợp lệ trong chuẩn XML (trừ \t, \n, \r)
+    $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', (string)$str);
+    return htmlspecialchars($clean, ENT_QUOTES | ENT_XML1, 'UTF-8');
+}
+
+function resolveSiteDomainForSitemap($pdo) {
+    $domain = 'https://leesincomic.com';
+
+    // 1. Đọc từ bảng site_settings (bản ghi JSON 'main_settings')
+    try {
+        $stmt = $pdo->prepare("SELECT setting_val FROM site_settings WHERE setting_key = 'main_settings'");
+        $stmt->execute();
+        $row = $stmt->fetch();
+        if ($row && !empty($row['setting_val'])) {
+            $decoded = json_decode($row['setting_val'], true);
+            if (is_array($decoded)) {
+                if (!empty($decoded['siteDomain'])) {
+                    $domain = trim($decoded['siteDomain']);
+                } elseif (!empty($decoded['site_domain'])) {
+                    $domain = trim($decoded['site_domain']);
+                }
+            }
+        }
+    } catch (Exception $e) {}
+
+    // 2. Fallback đọc từ bảng system_settings nếu có
+    if ($domain === 'https://leesincomic.com') {
+        try {
+            $stmtSys = $pdo->prepare("SELECT setting_value FROM system_settings WHERE setting_key IN ('siteDomain', 'site_domain') LIMIT 1");
+            $stmtSys->execute();
+            $val = $stmtSys->fetchColumn();
+            if ($val) {
+                $domain = trim($val);
+            }
+        } catch (Exception $e) {}
+    }
+
+    // 3. Fallback đọc từ HTTP_HOST của request hiện tại nếu domain vẫn là mặc định
+    if (($domain === 'https://leesincomic.com' || empty($domain)) && !empty($_SERVER['HTTP_HOST'])) {
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $domain = $scheme . '://' . $_SERVER['HTTP_HOST'];
+    }
+
+    if (!str_starts_with($domain, 'http')) {
+        $domain = 'https://' . $domain;
+    }
+    return rtrim($domain, '/');
+}
+
 function autoGeneratePhysicalSitemaps($pdo) {
     try {
-        $domain = 'https://leesincomic.com';
-        $siteSettingsRow = $pdo->query("SELECT setting_value FROM site_settings WHERE setting_key = 'site_domain'")->fetch();
-        if ($siteSettingsRow && !empty($siteSettingsRow['setting_value'])) {
-            $domain = rtrim($siteSettingsRow['setting_value'], '/');
-        }
-
+        $domain = resolveSiteDomainForSitemap($pdo);
         $today = date('Y-m-d');
-        $stmt = $pdo->query("SELECT id, slug, title, cover_image, updated_at FROM comics ORDER BY created_at DESC");
+
+        $stmt = $pdo->query("SELECT id, slug, title, cover_image, updated_at, created_at FROM comics ORDER BY created_at DESC");
         $comics = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
-        $chapStmt = $pdo->query("SELECT id, comic_id, chapter_number, created_at FROM chapters ORDER BY chapter_number ASC");
+        $chapStmt = $pdo->query("SELECT id, comic_id, chapter_number, created_at, updated_at FROM chapters WHERE scheduled_date IS NULL OR scheduled_date <= NOW() ORDER BY chapter_number ASC");
         $allChapters = $chapStmt ? $chapStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
         $teamStmt = $pdo->query("SELECT id, name FROM scan_teams");
@@ -3490,7 +3539,7 @@ function autoGeneratePhysicalSitemaps($pdo) {
         ];
 
         foreach ($staticUrls as $s) {
-            $fullXml .= "  <url>\n    <loc>" . htmlspecialchars($s['loc']) . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>{$s['freq']}</changefreq>\n    <priority>{$s['pri']}</priority>\n  </url>\n";
+            $fullXml .= "  <url>\n    <loc>" . cleanXmlForSitemap($s['loc']) . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>{$s['freq']}</changefreq>\n    <priority>{$s['pri']}</priority>\n  </url>\n";
         }
 
         $genres = [
@@ -3501,12 +3550,12 @@ function autoGeneratePhysicalSitemaps($pdo) {
             'slice-of-life', 'sports', 'supernatural', 'tragedy', 'xuyen-khong'
         ];
         foreach ($genres as $g) {
-            $fullXml .= "  <url>\n    <loc>" . htmlspecialchars("{$domain}/the-loai/{$g}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
+            $fullXml .= "  <url>\n    <loc>" . cleanXmlForSitemap("{$domain}/the-loai/{$g}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
         }
 
         foreach ($teams as $t) {
             $tId = $t['id'];
-            $fullXml .= "  <url>\n    <loc>" . htmlspecialchars("{$domain}/nhom-dich/{$tId}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
+            $fullXml .= "  <url>\n    <loc>" . cleanXmlForSitemap("{$domain}/nhom-dich/{$tId}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
         }
 
         $comicSlugMap = [];
@@ -3514,9 +3563,10 @@ function autoGeneratePhysicalSitemaps($pdo) {
             $slug = !empty($c['slug']) ? $c['slug'] : $c['id'];
             $comicSlugMap[$c['id']] = $slug;
             $loc = "{$domain}/truyen/{$slug}";
-            $fullXml .= "  <url>\n    <loc>" . htmlspecialchars($loc) . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n";
-            if (!empty($c['cover_image'])) {
-                $fullXml .= "    <image:image>\n      <image:loc>" . htmlspecialchars($c['cover_image']) . "</image:loc>\n      <image:title>" . htmlspecialchars($c['title'] ?? '') . "</image:title>\n    </image:image>\n";
+            $cLastMod = (!empty($c['updated_at']) && strlen($c['updated_at']) >= 10) ? substr($c['updated_at'], 0, 10) : $today;
+            $fullXml .= "  <url>\n    <loc>" . cleanXmlForSitemap($loc) . "</loc>\n    <lastmod>{$cLastMod}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n";
+            if (!empty($c['cover_image']) && str_starts_with($c['cover_image'], 'http')) {
+                $fullXml .= "    <image:image>\n      <image:loc>" . cleanXmlForSitemap($c['cover_image']) . "</image:loc>\n      <image:title>" . cleanXmlForSitemap($c['title'] ?? '') . "</image:title>\n    </image:image>\n";
             }
             $fullXml .= "  </url>\n";
         }
@@ -3524,54 +3574,99 @@ function autoGeneratePhysicalSitemaps($pdo) {
         foreach ($allChapters as $ch) {
             $comicSlug = isset($comicSlugMap[$ch['comic_id']]) ? $comicSlugMap[$ch['comic_id']] : 'truyen';
             $chapLoc = "{$domain}/truyen/{$comicSlug}/chap-{$ch['chapter_number']}";
-            $fullXml .= "  <url>\n    <loc>" . htmlspecialchars($chapLoc) . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n";
+            $chDate = !empty($ch['updated_at']) ? $ch['updated_at'] : (!empty($ch['created_at']) ? $ch['created_at'] : $today);
+            $chLastMod = (strlen($chDate) >= 10) ? substr($chDate, 0, 10) : $today;
+            $fullXml .= "  <url>\n    <loc>" . cleanXmlForSitemap($chapLoc) . "</loc>\n    <lastmod>{$chLastMod}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n";
         }
         $fullXml .= "</urlset>";
 
-        @file_put_contents(__DIR__ . '/sitemap.xml', $fullXml);
-
         // 2. sitemap_index.xml
         $indexXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n  <sitemap>\n    <loc>{$domain}/sitemap.xml</loc>\n    <lastmod>{$today}</lastmod>\n  </sitemap>\n  <sitemap>\n    <loc>{$domain}/sitemap_comics.xml</loc>\n    <lastmod>{$today}</lastmod>\n  </sitemap>\n  <sitemap>\n    <loc>{$domain}/sitemap_chapters.xml</loc>\n    <lastmod>{$today}</lastmod>\n  </sitemap>\n  <sitemap>\n    <loc>{$domain}/sitemap_categories.xml</loc>\n    <lastmod>{$today}</lastmod>\n  </sitemap>\n</sitemapindex>";
-        @file_put_contents(__DIR__ . '/sitemap_index.xml', $indexXml);
 
         // 3. sitemap_comics.xml
         $comicsXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:image=\"http://www.google.com/schemas/sitemap-image/1.1\">\n";
         foreach ($comics as $c) {
             $slug = !empty($c['slug']) ? $c['slug'] : $c['id'];
             $loc = "{$domain}/truyen/{$slug}";
-            $comicsXml .= "  <url>\n    <loc>" . htmlspecialchars($loc) . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n";
-            if (!empty($c['cover_image'])) {
-                $comicsXml .= "    <image:image>\n      <image:loc>" . htmlspecialchars($c['cover_image']) . "</image:loc>\n      <image:title>" . htmlspecialchars($c['title'] ?? '') . "</image:title>\n    </image:image>\n";
+            $cLastMod = (!empty($c['updated_at']) && strlen($c['updated_at']) >= 10) ? substr($c['updated_at'], 0, 10) : $today;
+            $comicsXml .= "  <url>\n    <loc>" . cleanXmlForSitemap($loc) . "</loc>\n    <lastmod>{$cLastMod}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n";
+            if (!empty($c['cover_image']) && str_starts_with($c['cover_image'], 'http')) {
+                $comicsXml .= "    <image:image>\n      <image:loc>" . cleanXmlForSitemap($c['cover_image']) . "</image:loc>\n      <image:title>" . cleanXmlForSitemap($c['title'] ?? '') . "</image:title>\n    </image:image>\n";
             }
             $comicsXml .= "  </url>\n";
         }
         $comicsXml .= "</urlset>";
-        @file_put_contents(__DIR__ . '/sitemap_comics.xml', $comicsXml);
 
         // 4. sitemap_chapters.xml
         $chapsXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
         foreach ($allChapters as $ch) {
             $comicSlug = isset($comicSlugMap[$ch['comic_id']]) ? $comicSlugMap[$ch['comic_id']] : 'truyen';
             $chapLoc = "{$domain}/truyen/{$comicSlug}/chap-{$ch['chapter_number']}";
-            $chapsXml .= "  <url>\n    <loc>" . htmlspecialchars($chapLoc) . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n";
+            $chDate = !empty($ch['updated_at']) ? $ch['updated_at'] : (!empty($ch['created_at']) ? $ch['created_at'] : $today);
+            $chLastMod = (strlen($chDate) >= 10) ? substr($chDate, 0, 10) : $today;
+            $chapsXml .= "  <url>\n    <loc>" . cleanXmlForSitemap($chapLoc) . "</loc>\n    <lastmod>{$chLastMod}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n";
         }
         $chapsXml .= "</urlset>";
-        @file_put_contents(__DIR__ . '/sitemap_chapters.xml', $chapsXml);
 
         // 5. sitemap_categories.xml
         $catXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
         foreach ($genres as $g) {
-            $catXml .= "  <url>\n    <loc>" . htmlspecialchars("{$domain}/the-loai/{$g}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
+            $catXml .= "  <url>\n    <loc>" . cleanXmlForSitemap("{$domain}/the-loai/{$g}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
         }
         foreach ($teams as $t) {
             $tId = $t['id'];
-            $catXml .= "  <url>\n    <loc>" . htmlspecialchars("{$domain}/nhom-dich/{$tId}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
+            $catXml .= "  <url>\n    <loc>" . cleanXmlForSitemap("{$domain}/nhom-dich/{$tId}") . "</loc>\n    <lastmod>{$today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n";
         }
         $catXml .= "</urlset>";
-        @file_put_contents(__DIR__ . '/sitemap_categories.xml', $catXml);
 
-        return true;
+        // Xác định thư mục gốc dự án: dist luôn nằm ngang hàng với public
+        $cleanDir = rtrim(str_replace('\\', '/', __DIR__), '/');
+        $baseName = basename($cleanDir);
+        $rootDir = ($baseName === 'public' || $baseName === 'dist') ? dirname($cleanDir) : $cleanDir;
+
+        // Thư mục dist luôn nằm ngang hàng với thư mục public
+        $targetDirs = array_unique([
+            $rootDir,             // Thư mục gốc dự án (d:/xampp/htdocs)
+            $rootDir . '/public', // Thư mục public (d:/xampp/htdocs/public)
+            $rootDir . '/dist',   // Thư mục dist (d:/xampp/htdocs/dist - ngang hàng với public)
+        ]);
+
+        $robotsTxt = "User-agent: *\nAllow: /\nAllow: /truyen/\nAllow: /the-loai/\nAllow: /hot\nAllow: /moi-cap-nhat\nAllow: /xep-hang/\nAllow: /nhom-dich-all\n\nDisallow: /admin\nDisallow: /admin/\nDisallow: /nhom-dich-portal\nDisallow: /nhom-dich-portal/\nDisallow: /lich-su\nDisallow: /theo-doi\nDisallow: /api.php\n\nSitemap: {$domain}/sitemap.xml\nSitemap: {$domain}/sitemap_index.xml\n";
+
+        foreach ($targetDirs as $td) {
+            if (!is_dir($td) && str_ends_with(rtrim($td, '/\\'), 'dist')) {
+                @mkdir($td, 0777, true);
+            }
+            if (is_dir($td) && is_writable($td)) {
+                @file_put_contents($td . '/sitemap.xml', $fullXml);
+                @file_put_contents($td . '/sitemap_index.xml', $indexXml);
+                @file_put_contents($td . '/sitemap_comics.xml', $comicsXml);
+                @file_put_contents($td . '/sitemap_chapters.xml', $chapsXml);
+                @file_put_contents($td . '/sitemap_categories.xml', $catXml);
+                @file_put_contents($td . '/robots.txt', $robotsTxt);
+
+                // Nếu là thư mục dist (ngang hàng với public), đồng bộ api.php và .htaccess từ public sang
+                if (str_ends_with(rtrim($td, '/\\'), 'dist')) {
+                    $srcApi = $rootDir . '/public/api.php';
+                    $srcHtaccess = $rootDir . '/public/.htaccess';
+                    if (file_exists($srcApi) && $srcApi !== $td . '/api.php') {
+                        @copy($srcApi, $td . '/api.php');
+                    }
+                    if (file_exists($srcHtaccess) && $srcHtaccess !== $td . '/.htaccess') {
+                        @copy($srcHtaccess, $td . '/.htaccess');
+                    }
+                }
+            }
+        }
+
+        return [
+            'success' => true,
+            'totalComics' => count($comics),
+            'totalChapters' => count($allChapters),
+            'domain' => $domain
+        ];
     } catch (Exception $e) {
+        @error_log("autoGeneratePhysicalSitemaps Error: " . $e->getMessage());
         return false;
     }
 }
@@ -3580,13 +3675,24 @@ function autoGeneratePhysicalSitemaps($pdo) {
 // ROUTE: XUẤT SITEMAP XML TỰ ĐỘNG CHO GOOGLE CRAWLER (GET SITEMAP)
 // -----------------------------------------------------------------------------
 if ($action === 'sitemap' || $action === 'sitemap.xml' || $action === 'regenerate_sitemap') {
-    autoGeneratePhysicalSitemaps($pdo);
+    $genResult = autoGeneratePhysicalSitemaps($pdo);
 
     if ($action === 'regenerate_sitemap') {
-        sendJsonResponse(['success' => true, 'message' => 'Đã tự động cập nhật toàn bộ file sitemap.xml, sitemap_index.xml, sitemap_comics.xml, sitemap_chapters.xml trên máy chủ thành công!']);
+        if ($genResult && !empty($genResult['success'])) {
+            sendJsonResponse([
+                'success' => true,
+                'message' => "Đã tự động cập nhật toàn bộ file sitemap.xml ({$genResult['totalComics']} truyện, {$genResult['totalChapters']} chương) theo domain: {$genResult['domain']} thành công!",
+                'details' => $genResult
+            ]);
+        } else {
+            sendJsonResponse(['success' => false, 'message' => 'Lỗi khi cập nhật sitemap vật lý trên máy chủ!'], 500);
+        }
     }
 
     $sitemapPath = __DIR__ . '/sitemap.xml';
+    if (!file_exists($sitemapPath) && file_exists(dirname(__DIR__) . '/sitemap.xml')) {
+        $sitemapPath = dirname(__DIR__) . '/sitemap.xml';
+    }
     if (file_exists($sitemapPath)) {
         header('Content-Type: application/xml; charset=utf-8');
         readfile($sitemapPath);
@@ -3594,16 +3700,58 @@ if ($action === 'sitemap' || $action === 'sitemap.xml' || $action === 'regenerat
     }
 
     header('Content-Type: application/xml; charset=utf-8');
-    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://leesincomic.com/</loc></url></urlset>";
+    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>" . cleanXmlForSitemap(resolveSiteDomainForSitemap($pdo)) . "/</loc></url></urlset>";
     exit();
 }
 
 if ($action === 'sitemap_index.xml' || $action === 'sitemap_index') {
     autoGeneratePhysicalSitemaps($pdo);
     $indexPath = __DIR__ . '/sitemap_index.xml';
+    if (!file_exists($indexPath) && file_exists(dirname(__DIR__) . '/sitemap_index.xml')) {
+        $indexPath = dirname(__DIR__) . '/sitemap_index.xml';
+    }
     if (file_exists($indexPath)) {
         header('Content-Type: application/xml; charset=utf-8');
         readfile($indexPath);
+        exit();
+    }
+}
+
+if ($action === 'sitemap_comics.xml' || $action === 'sitemap_comics') {
+    autoGeneratePhysicalSitemaps($pdo);
+    $comicsPath = __DIR__ . '/sitemap_comics.xml';
+    if (!file_exists($comicsPath) && file_exists(dirname(__DIR__) . '/sitemap_comics.xml')) {
+        $comicsPath = dirname(__DIR__) . '/sitemap_comics.xml';
+    }
+    if (file_exists($comicsPath)) {
+        header('Content-Type: application/xml; charset=utf-8');
+        readfile($comicsPath);
+        exit();
+    }
+}
+
+if ($action === 'sitemap_chapters.xml' || $action === 'sitemap_chapters') {
+    autoGeneratePhysicalSitemaps($pdo);
+    $chapsPath = __DIR__ . '/sitemap_chapters.xml';
+    if (!file_exists($chapsPath) && file_exists(dirname(__DIR__) . '/sitemap_chapters.xml')) {
+        $chapsPath = dirname(__DIR__) . '/sitemap_chapters.xml';
+    }
+    if (file_exists($chapsPath)) {
+        header('Content-Type: application/xml; charset=utf-8');
+        readfile($chapsPath);
+        exit();
+    }
+}
+
+if ($action === 'sitemap_categories.xml' || $action === 'sitemap_categories') {
+    autoGeneratePhysicalSitemaps($pdo);
+    $catPath = __DIR__ . '/sitemap_categories.xml';
+    if (!file_exists($catPath) && file_exists(dirname(__DIR__) . '/sitemap_categories.xml')) {
+        $catPath = dirname(__DIR__) . '/sitemap_categories.xml';
+    }
+    if (file_exists($catPath)) {
+        header('Content-Type: application/xml; charset=utf-8');
+        readfile($catPath);
         exit();
     }
 }
@@ -3613,11 +3761,7 @@ if ($action === 'sitemap_index.xml' || $action === 'sitemap_index') {
 // -----------------------------------------------------------------------------
 if ($action === 'robots' || $action === 'robots.txt') {
     header('Content-Type: text/plain; charset=utf-8');
-    $domain = 'https://leesincomic.com';
-    $siteSettingsRow = $pdo->query("SELECT setting_value FROM site_settings WHERE setting_key = 'site_domain'")->fetch();
-    if ($siteSettingsRow && !empty($siteSettingsRow['setting_value'])) {
-        $domain = rtrim($siteSettingsRow['setting_value'], '/');
-    }
+    $domain = resolveSiteDomainForSitemap($pdo);
 
     echo "User-agent: *\n";
     echo "Allow: /\n";
