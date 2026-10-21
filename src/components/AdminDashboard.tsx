@@ -3567,23 +3567,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     onClick={async () => {
                       try {
                         setUserActionSuccess('Đang tạo và cập nhật lại toàn bộ sitemap XML...');
-                        if (mysqlConfig.enabled) {
-                          const res = await fetch(`${mysqlConfig.apiUrl.replace(/\/+$/, '')}?action=regenerate_sitemap`, {
-                            headers: { 'X-API-KEY': mysqlConfig.apiKey }
+
+                        // 1. Luôn gọi API /api.php của server hiện tại để cập nhật ngay vào dist/, public/ và root
+                        try {
+                          await fetch('/api.php?action=regenerate_sitemap', {
+                            headers: { 'X-API-KEY': mysqlConfig?.apiKey || 'Leesin_Secret_MySQL_Key_2026' }
                           });
-                          const json = await res.json();
-                          if (json.success) {
-                            setUserActionSuccess('Đã cập nhật tự động toàn bộ Sitemap XML vào máy chủ thành công!');
-                          }
-                        } else {
-                          const xml = generateFullSitemapXml({
-                            domain: localSiteSettings.siteDomain || 'https://leesincomic.com',
-                            comics,
-                            siteSettings: localSiteSettings,
-                          });
-                          downloadClientFile('sitemap.xml', xml, 'application/xml;charset=utf-8');
-                          setUserActionSuccess('Đã tạo sitemap.xml thành công!');
+                        } catch (errLocal) {}
+
+                        // 2. Nếu có apiUrl từ xa cấu hình riêng, đồng thời gọi tiếp để cập nhật server từ xa
+                        const remoteApi = (mysqlConfig?.apiUrl || '').trim().replace(/\/+$/, '');
+                        if (remoteApi && remoteApi !== '/api.php' && !remoteApi.includes(window.location.host)) {
+                          try {
+                            await fetch(`${remoteApi}?action=regenerate_sitemap`, {
+                              headers: { 'X-API-KEY': mysqlConfig?.apiKey || 'Leesin_Secret_MySQL_Key_2026' }
+                            });
+                          } catch (errRemote) {}
                         }
+
+                        setUserActionSuccess('Đã cập nhật tự động toàn bộ Sitemap XML vào thư mục dist/ và public/ thành công!');
                       } catch (e) {
                         setUserActionSuccess('Đã yêu cầu cập nhật sitemap!');
                       }

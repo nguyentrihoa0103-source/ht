@@ -514,7 +514,8 @@ function parseBody(req: IncomingMessage): Promise<any> {
 
 function escapeXml(str: string): string {
   if (!str) return '';
-  return String(str)
+  const clean = String(str).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return clean
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -539,69 +540,79 @@ function sendPlainText(res: ServerResponse, status: number, text: string) {
   res.end(text);
 }
 
-export async function handleApiPhp(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-  if (!req.url) return false;
+export interface SitemapBundle {
+  fullXml: string;
+  indexXml: string;
+  comicsXml: string;
+  chapsXml: string;
+  catXml: string;
+  totalComics: number;
+  totalChapters: number;
+  domain: string;
+}
 
-  const parsedUrl = new URL(req.url, 'http://localhost:3000');
-  const pathname = parsedUrl.pathname;
-  const db = getDb();
-  const domain = (db.siteSettings?.siteDomain && db.siteSettings.siteDomain.startsWith('http'))
-    ? db.siteSettings.siteDomain.replace(/\/$/, '')
-    : 'https://leesincomic.com';
+export function generateSitemapsBundle(db: DatabaseStore, originDomain?: string): SitemapBundle {
+  let domain = originDomain || db.siteSettings?.siteDomain || 'https://leesincomic.com';
+  if (!domain.startsWith('http')) {
+    domain = `https://${domain}`;
+  }
+  domain = domain.replace(/\/+$/, '');
   const today = new Date().toISOString().split('T')[0];
 
-  // Handle data_store.json route directly from memory so no physical public file is needed
-  if (pathname === '/data_store.json' || pathname === '/public/data_store.json') {
-    sendJson(res, 200, db);
-    return true;
-  }
+  const staticUrls = [
+    { loc: `${domain}/`, priority: '1.0', changefreq: 'daily' },
+    { loc: `${domain}/hot`, priority: '0.9', changefreq: 'daily' },
+    { loc: `${domain}/moi-cap-nhat`, priority: '0.9', changefreq: 'daily' },
+    { loc: `${domain}/the-loai/tat-ca`, priority: '0.8', changefreq: 'weekly' },
+    { loc: `${domain}/xep-hang/month`, priority: '0.8', changefreq: 'weekly' },
+    { loc: `${domain}/nhom-dich-all`, priority: '0.7', changefreq: 'weekly' },
+  ];
 
-  // Handle sitemap and robots routes directly
-  if (pathname === '/sitemap.xml') {
-    let fullXml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-    fullXml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
-    const staticUrls = [
-      { loc: `${domain}/`, priority: '1.0', changefreq: 'daily' },
-      { loc: `${domain}/hot`, priority: '0.9', changefreq: 'daily' },
-      { loc: `${domain}/moi-cap-nhat`, priority: '0.9', changefreq: 'daily' },
-      { loc: `${domain}/the-loai/tat-ca`, priority: '0.8', changefreq: 'weekly' },
-      { loc: `${domain}/xep-hang/month`, priority: '0.8', changefreq: 'weekly' },
-      { loc: `${domain}/nhom-dich-all`, priority: '0.7', changefreq: 'weekly' },
-    ];
-    staticUrls.forEach((u) => {
-      fullXml += `  <url>\n    <loc>${escapeXml(u.loc)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>\n`;
-    });
-    const genres = [
-      'all', 'manhwa', 'manga', 'manhua', 'dam-my', 'bach-hop', 'ngon-tinh',
-      'action', 'adventure', 'chuyen-sinh', 'co-dai', 'comedy', 'drama',
-      'fantasy', 'harem', 'historical', 'isekai', 'magic', 'martial-arts',
-      'mystery', 'romance', 'school-life', 'sci-fi', 'shoujo', 'shounen',
-      'slice-of-life', 'sports', 'supernatural', 'tragedy', 'xuyen-khong'
-    ];
-    genres.forEach((g) => {
-      fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/the-loai/${g}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
-    });
-    (db.teams || []).forEach((t) => {
-      fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/nhom-dich/${t.id}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
-    });
-    (db.comics || []).forEach((c) => {
-      const slug = c.slug || c.id;
-      fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n`;
-      if (c.coverImage) {
-        fullXml += `    <image:image>\n      <image:loc>${escapeXml(c.coverImage)}</image:loc>\n      <image:title>${escapeXml(c.title || '')}</image:title>\n    </image:image>\n`;
-      }
-      fullXml += `  </url>\n`;
-      (c.chapters || []).forEach((ch: any) => {
-        fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}/chap-${ch.chapterNumber}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n`;
-      });
-    });
-    fullXml += `</urlset>`;
-    sendXml(res, 200, fullXml);
-    return true;
-  }
+  const genres = [
+    'all', 'manhwa', 'manga', 'manhua', 'dam-my', 'bach-hop', 'ngon-tinh',
+    'action', 'adventure', 'chuyen-sinh', 'co-dai', 'comedy', 'drama',
+    'fantasy', 'harem', 'historical', 'isekai', 'magic', 'martial-arts',
+    'mystery', 'romance', 'school-life', 'sci-fi', 'shoujo', 'shounen',
+    'slice-of-life', 'sports', 'supernatural', 'tragedy', 'xuyen-khong'
+  ];
 
-  if (pathname === '/sitemap_index.xml') {
-    const indexXml = `<?xml version="1.0" encoding="UTF-8"?>
+  // 1. fullXml (Unified sitemap)
+  let fullXml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  fullXml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
+
+  staticUrls.forEach((u) => {
+    fullXml += `  <url>\n    <loc>${escapeXml(u.loc)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>\n`;
+  });
+
+  genres.forEach((g) => {
+    fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/the-loai/${g}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
+  });
+
+  (db.teams || []).forEach((t) => {
+    fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/nhom-dich/${t.id}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
+  });
+
+  let totalChapters = 0;
+  (db.comics || []).forEach((c) => {
+    const slug = c.slug || c.id;
+    const cLastMod = (c.updatedAt && String(c.updatedAt).length >= 10) ? String(c.updatedAt).substring(0, 10) : today;
+    fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}`)}</loc>\n    <lastmod>${cLastMod}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n`;
+    if (c.coverImage && typeof c.coverImage === 'string' && c.coverImage.startsWith('http')) {
+      fullXml += `    <image:image>\n      <image:loc>${escapeXml(c.coverImage)}</image:loc>\n      <image:title>${escapeXml(c.title || '')}</image:title>\n    </image:image>\n`;
+    }
+    fullXml += `  </url>\n`;
+
+    (c.chapters || []).forEach((ch: any) => {
+      totalChapters++;
+      const chDate = ch.updatedAt || ch.createdAt || today;
+      const chLastMod = (String(chDate).length >= 10) ? String(chDate).substring(0, 10) : today;
+      fullXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}/chap-${ch.chapterNumber}`)}</loc>\n    <lastmod>${chLastMod}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n`;
+    });
+  });
+  fullXml += `</urlset>`;
+
+  // 2. indexXml (Partition index)
+  const indexXml = `<?xml version="1.0" encoding="UTF-8"?>
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap>
     <loc>${domain}/sitemap.xml</loc>
@@ -620,55 +631,158 @@ export async function handleApiPhp(req: IncomingMessage, res: ServerResponse): P
     <lastmod>${today}</lastmod>
   </sitemap>
 </sitemapindex>`;
-    sendXml(res, 200, indexXml);
+
+  // 3. comicsXml
+  let comicsXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
+  (db.comics || []).forEach((c) => {
+    const slug = c.slug || c.id;
+    const cLastMod = (c.updatedAt && String(c.updatedAt).length >= 10) ? String(c.updatedAt).substring(0, 10) : today;
+    comicsXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}`)}</loc>\n    <lastmod>${cLastMod}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n`;
+    if (c.coverImage && typeof c.coverImage === 'string' && c.coverImage.startsWith('http')) {
+      comicsXml += `    <image:image>\n      <image:loc>${escapeXml(c.coverImage)}</image:loc>\n      <image:title>${escapeXml(c.title || '')}</image:title>\n    </image:image>\n`;
+    }
+    comicsXml += `  </url>\n`;
+  });
+  comicsXml += `</urlset>`;
+
+  // 4. chapsXml
+  let chapsXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
+  (db.comics || []).forEach((c) => {
+    const slug = c.slug || c.id;
+    (c.chapters || []).forEach((ch: any) => {
+      const chDate = ch.updatedAt || ch.createdAt || today;
+      const chLastMod = (String(chDate).length >= 10) ? String(chDate).substring(0, 10) : today;
+      chapsXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}/chap-${ch.chapterNumber}`)}</loc>\n    <lastmod>${chLastMod}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n`;
+    });
+  });
+  chapsXml += `</urlset>`;
+
+  // 5. catXml
+  let catXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
+  genres.forEach((g) => {
+    catXml += `  <url>\n    <loc>${escapeXml(`${domain}/the-loai/${g}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
+  });
+  (db.teams || []).forEach((t) => {
+    catXml += `  <url>\n    <loc>${escapeXml(`${domain}/nhom-dich/${t.id}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
+  });
+  catXml += `</urlset>`;
+
+  return {
+    fullXml,
+    indexXml,
+    comicsXml,
+    chapsXml,
+    catXml,
+    totalComics: (db.comics || []).length,
+    totalChapters,
+    domain,
+  };
+}
+
+export function writePhysicalSitemapsToDisk(bundle: SitemapBundle) {
+  const targetDirs = [
+    process.cwd(),
+    path.resolve(process.cwd(), 'public'),
+    path.resolve(process.cwd(), 'dist'),
+  ];
+
+  const robotsTxt = `# Robots.txt for ${bundle.domain}
+User-agent: *
+Allow: /
+Allow: /truyen/
+Allow: /the-loai/
+Allow: /hot
+Allow: /moi-cap-nhat
+Allow: /xep-hang/
+Allow: /nhom-dich-all
+
+Disallow: /admin
+Disallow: /admin/
+Disallow: /nhom-dich-portal
+Disallow: /nhom-dich-portal/
+Disallow: /lich-su
+Disallow: /theo-doi
+Disallow: /api.php
+
+Sitemap: ${bundle.domain}/sitemap.xml
+Sitemap: ${bundle.domain}/sitemap_index.xml
+`;
+
+  targetDirs.forEach((dir) => {
+    try {
+      if (!fs.existsSync(dir) && dir.endsWith('dist')) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      if (fs.existsSync(dir)) {
+        fs.writeFileSync(path.join(dir, 'sitemap.xml'), bundle.fullXml, 'utf-8');
+        fs.writeFileSync(path.join(dir, 'sitemap_index.xml'), bundle.indexXml, 'utf-8');
+        fs.writeFileSync(path.join(dir, 'sitemap_comics.xml'), bundle.comicsXml, 'utf-8');
+        fs.writeFileSync(path.join(dir, 'sitemap_chapters.xml'), bundle.chapsXml, 'utf-8');
+        fs.writeFileSync(path.join(dir, 'sitemap_categories.xml'), bundle.catXml, 'utf-8');
+        fs.writeFileSync(path.join(dir, 'robots.txt'), robotsTxt, 'utf-8');
+
+        // Nếu là thư mục dist, tự động đồng bộ cả api.php và .htaccess từ public
+        if (dir.endsWith('dist')) {
+          const publicApi = path.resolve(process.cwd(), 'public', 'api.php');
+          const distApi = path.join(dir, 'api.php');
+          if (fs.existsSync(publicApi)) {
+            try { fs.copyFileSync(publicApi, distApi); } catch {}
+          }
+          const publicHtaccess = path.resolve(process.cwd(), 'public', '.htaccess');
+          const distHtaccess = path.join(dir, '.htaccess');
+          if (fs.existsSync(publicHtaccess)) {
+            try { fs.copyFileSync(publicHtaccess, distHtaccess); } catch {}
+          }
+        }
+      }
+    } catch {}
+  });
+}
+
+export async function handleApiPhp(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  if (!req.url) return false;
+
+  const parsedUrl = new URL(req.url, 'http://localhost:3000');
+  const pathname = parsedUrl.pathname;
+  const db = getDb();
+  const domain = (db.siteSettings?.siteDomain && db.siteSettings.siteDomain.startsWith('http'))
+    ? db.siteSettings.siteDomain.replace(/\/$/, '')
+    : 'https://leesincomic.com';
+
+  // Handle data_store.json route directly from memory so no physical public file is needed
+  if (pathname === '/data_store.json' || pathname === '/public/data_store.json') {
+    sendJson(res, 200, db);
+    return true;
+  }
+
+  // Handle direct sitemap and robots routes
+  if (pathname === '/sitemap.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.fullXml);
+    return true;
+  }
+
+  if (pathname === '/sitemap_index.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.indexXml);
     return true;
   }
 
   if (pathname === '/sitemap_comics.xml') {
-    let comicsXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
-    (db.comics || []).forEach((c) => {
-      const slug = c.slug || c.id;
-      comicsXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n`;
-      if (c.coverImage) {
-        comicsXml += `    <image:image>\n      <image:loc>${escapeXml(c.coverImage)}</image:loc>\n      <image:title>${escapeXml(c.title || '')}</image:title>\n    </image:image>\n`;
-      }
-      comicsXml += `  </url>\n`;
-    });
-    comicsXml += `</urlset>`;
-    sendXml(res, 200, comicsXml);
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.comicsXml);
     return true;
   }
 
   if (pathname === '/sitemap_chapters.xml') {
-    let chapsXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
-    (db.comics || []).forEach((c) => {
-      const slug = c.slug || c.id;
-      (c.chapters || []).forEach((ch: any) => {
-        chapsXml += `  <url>\n    <loc>${escapeXml(`${domain}/truyen/${slug}/chap-${ch.chapterNumber}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>\n`;
-      });
-    });
-    chapsXml += `</urlset>`;
-    sendXml(res, 200, chapsXml);
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.chapsXml);
     return true;
   }
 
   if (pathname === '/sitemap_categories.xml') {
-    let catXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
-    const genres = [
-      'all', 'manhwa', 'manga', 'manhua', 'dam-my', 'bach-hop', 'ngon-tinh',
-      'action', 'adventure', 'chuyen-sinh', 'co-dai', 'comedy', 'drama',
-      'fantasy', 'harem', 'historical', 'isekai', 'magic', 'martial-arts',
-      'mystery', 'romance', 'school-life', 'sci-fi', 'shoujo', 'shounen',
-      'slice-of-life', 'sports', 'supernatural', 'tragedy', 'xuyen-khong'
-    ];
-    genres.forEach((g) => {
-      catXml += `  <url>\n    <loc>${escapeXml(`${domain}/the-loai/${g}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
-    });
-    (db.teams || []).forEach((t) => {
-      catXml += `  <url>\n    <loc>${escapeXml(`${domain}/nhom-dich/${t.id}`)}</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n`;
-    });
-    catXml += `</urlset>`;
-    sendXml(res, 200, catXml);
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.catXml);
     return true;
   }
 
@@ -716,6 +830,78 @@ Sitemap: ${domain}/sitemap_index.xml
   }
 
   const action = parsedUrl.searchParams.get('action') || 'ping';
+
+  // SITEMAP API ACTIONS
+  if (action === 'regenerate_sitemap') {
+    const bundle = generateSitemapsBundle(db, domain);
+    writePhysicalSitemapsToDisk(bundle);
+    sendJson(res, 200, {
+      success: true,
+      message: `Đã tự động cập nhật toàn bộ file sitemap.xml (${bundle.totalComics} truyện, ${bundle.totalChapters} chương) theo domain: ${bundle.domain} thành công!`,
+      details: {
+        totalComics: bundle.totalComics,
+        totalChapters: bundle.totalChapters,
+        domain: bundle.domain,
+      },
+    });
+    return true;
+  }
+
+  if (action === 'sitemap' || action === 'sitemap.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.fullXml);
+    return true;
+  }
+
+  if (action === 'sitemap_index' || action === 'sitemap_index.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.indexXml);
+    return true;
+  }
+
+  if (action === 'sitemap_comics' || action === 'sitemap_comics.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.comicsXml);
+    return true;
+  }
+
+  if (action === 'sitemap_chapters' || action === 'sitemap_chapters.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.chapsXml);
+    return true;
+  }
+
+  if (action === 'sitemap_categories' || action === 'sitemap_categories.xml') {
+    const bundle = generateSitemapsBundle(db, domain);
+    sendXml(res, 200, bundle.catXml);
+    return true;
+  }
+
+  if (action === 'robots' || action === 'robots.txt') {
+    const robots = `# Robots.txt for ${domain}
+User-agent: *
+Allow: /
+Allow: /truyen/
+Allow: /the-loai/
+Allow: /hot
+Allow: /moi-cap-nhat
+Allow: /xep-hang/
+Allow: /nhom-dich-all
+
+Disallow: /admin
+Disallow: /admin/
+Disallow: /nhom-dich-portal
+Disallow: /nhom-dich-portal/
+Disallow: /lich-su
+Disallow: /theo-doi
+Disallow: /api.php
+
+Sitemap: ${domain}/sitemap.xml
+Sitemap: ${domain}/sitemap_index.xml
+`;
+    sendPlainText(res, 200, robots);
+    return true;
+  }
 
   // 1. PING
   if (action === 'ping') {
@@ -1173,6 +1359,10 @@ Sitemap: ${domain}/sitemap_index.xml
 
     syncDbTeamsViews(db);
     saveDatabase(db);
+    try {
+      const bundle = generateSitemapsBundle(db, domain);
+      writePhysicalSitemapsToDisk(bundle);
+    } catch {}
     sendJson(res, 200, { success: true, message: 'Lưu thông tin truyện thành công vào Database!', comicId: id, slug: cleanSlug });
     return true;
   }
@@ -1275,6 +1465,10 @@ Sitemap: ${domain}/sitemap_index.xml
       comic.chapters.sort((a: any, b: any) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0));
       syncDbTeamsViews(db);
       saveDatabase(db);
+      try {
+        const bundle = generateSitemapsBundle(db, domain);
+        writePhysicalSitemapsToDisk(bundle);
+      } catch {}
       sendJson(res, 200, { success: true, message: 'Đã lưu / cập nhật chương thành công vào Database!' });
     } else {
       sendJson(res, 404, { success: false, message: 'Không tìm thấy bộ truyện tương ứng!' });
@@ -1293,6 +1487,10 @@ Sitemap: ${domain}/sitemap_index.xml
           comic.chapters = comic.chapters.filter((ch: any) => ch.id !== chapId);
           if (comic.chapters.length !== beforeLen) {
             saveDatabase(db);
+            try {
+              const bundle = generateSitemapsBundle(db, domain);
+              writePhysicalSitemapsToDisk(bundle);
+            } catch {}
             break;
           }
         }
@@ -1310,6 +1508,10 @@ Sitemap: ${domain}/sitemap_index.xml
       db.comics = db.comics.filter((c) => c.id !== comicId);
       syncDbTeamsViews(db);
       saveDatabase(db);
+      try {
+        const bundle = generateSitemapsBundle(db, domain);
+        writePhysicalSitemapsToDisk(bundle);
+      } catch {}
     }
     sendJson(res, 200, { success: true, message: 'Đã xóa truyện và toàn bộ chương!' });
     return true;

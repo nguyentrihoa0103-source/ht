@@ -448,7 +448,7 @@ export function generateSitemapIndexXml(options: { domain: string }): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap>
-    <loc>${origin}/sitemap_main.xml</loc>
+    <loc>${origin}/sitemap.xml</loc>
     <lastmod>${today}</lastmod>
   </sitemap>
   <sitemap>
